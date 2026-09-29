@@ -1,0 +1,11 @@
+{
+  "name": "Ejemplo",
+  "language": "PowerShell",
+  "categories": [
+    "PDF"
+  ],
+  "purpose": "Ejemplo de cómo una herramienta podría documentarse.",
+  "problem": "Automatizar una tarea repetitiva.",
+  "requirements": "Windows y PowerShell.",
+  "output": "Resultado de la automatización."
+}
