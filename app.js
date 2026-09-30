@@ -1,5 +1,145 @@
 const STORAGE_KEY = "toolbox-ia-tools-v1";
 const THEME_KEY = "toolbox-ia-theme";
+const ADMIN_SESSION_KEY = "toolbox-ia-admin-session-v1";
+const ADMIN_ACTION_PREFIX = "toolbox-ia-admin-action-v1-";
+const ADMIN_SESSION_MS = 30 * 60 * 1000;
+const ADMIN_PASSWORD_HASH = "9275cc0b94ebcb97186606a28d8dd88cdbf5c83cf2a4452db265acad6ee4391b";
+
+async function hashText(value) {
+  const bytes = new TextEncoder().encode(value);
+  const hash = await crypto.subtle.digest("SHA-256", bytes);
+
+  return Array.from(new Uint8Array(hash))
+    .map(byte => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function getAdminSession() {
+  try {
+    const session = JSON.parse(
+      sessionStorage.getItem(ADMIN_SESSION_KEY) || "null"
+    );
+
+    if (session?.expiresAt > Date.now()) {
+      return session;
+    }
+  } catch {}
+
+  sessionStorage.removeItem(ADMIN_SESSION_KEY);
+  return null;
+}
+
+function isAdmin() {
+  return Boolean(getAdminSession());
+}
+
+function createAdminActionToken(action, id = "") {
+  const token = crypto.randomUUID();
+
+  sessionStorage.setItem(
+    `${ADMIN_ACTION_PREFIX}${token}`,
+    JSON.stringify({
+      action,
+      id,
+      expiresAt: Date.now() + 60 * 1000
+    })
+  );
+
+  return token;
+}
+
+function consumeAdminActionToken(token, action, id = "") {
+  if (!token || !isAdmin()) return false;
+
+  const key = `${ADMIN_ACTION_PREFIX}${token}`;
+  const raw = sessionStorage.getItem(key);
+  sessionStorage.removeItem(key);
+
+  if (!raw) return false;
+
+  try {
+    const payload = JSON.parse(raw);
+
+    return payload.action === action &&
+      payload.id === id &&
+      payload.expiresAt > Date.now();
+  } catch {
+    return false;
+  }
+}
+
+async function requestAdminAccess() {
+  if (isAdmin()) {
+    sessionStorage.removeItem(ADMIN_SESSION_KEY);
+    renderAll();
+    updateAdminButton();
+    showView("dashboard");
+    toast("Sesión de administrador cerrada.");
+    return;
+  }
+
+  const modal = document.getElementById("adminModal");
+  const input = document.getElementById("adminPassword");
+
+  if (!modal || !input) return;
+
+  input.value = "";
+  modal.classList.remove("hidden");
+  input.focus();
+}
+
+async function authenticateAdmin() {
+  const input = document.getElementById("adminPassword");
+  const modal = document.getElementById("adminModal");
+
+  if (!input || !modal) return;
+
+  const password = input.value;
+
+  if (!password) {
+    toast("Escribe la contraseña.");
+    return;
+  }
+
+  const passwordHash = await hashText(password);
+
+  if (passwordHash !== ADMIN_PASSWORD_HASH) {
+    toast("Contraseña incorrecta.");
+    return;
+  }
+
+  sessionStorage.setItem(
+    ADMIN_SESSION_KEY,
+    JSON.stringify({
+      token: crypto.randomUUID(),
+      expiresAt: Date.now() + ADMIN_SESSION_MS
+    })
+  );
+
+  modal.classList.add("hidden");
+  renderAll();
+  updateAdminButton();
+  toast("Modo administrador activado durante 30 minutos.");
+}
+
+function closeAdminAccess() {
+  const modal = document.getElementById("adminModal");
+
+  if (modal) {
+    modal.classList.add("hidden");
+  }
+}
+
+function updateAdminButton() {
+  const button = document.getElementById("adminAccess");
+
+  if (!button) return;
+
+  button.querySelector("[data-admin-label]").textContent =
+    isAdmin()
+      ? "Cerrar administración"
+      : "Acceso administrador";
+}
 
 const demoTools = [
   {
@@ -46,6 +186,7 @@ function loadTools() {
 }
 
 let tools = loadTools();
+let selectedRelation = { from: "", to: "" };
 
 function saveTools() {
   localStorage.setItem(
@@ -108,7 +249,8 @@ function riskBadge(analysis) {
 
   const risk =
     String(
-      analysis?.risk || "desconocido"
+      analysis?.risk ||
+      "desconocido"
     ).toLowerCase();
 
   const map = {
@@ -213,7 +355,7 @@ function renderStats() {
   ].map(
     ([ic, label, value, sub]) => `
 
-      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-soft dark:border-slate-800 dark:bg-slate-900">
+      <button data-kpi-filter="${label === "PowerShell" || label === "Python" ? label : "all"}" class="kpi-card w-full rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-soft dark:border-slate-800 dark:bg-slate-900">
 
         <div class="flex items-center justify-between">
 
@@ -242,12 +384,50 @@ function renderStats() {
           ${sub}
         </div>
 
-      </div>
+      </button>
 
     `
   ).join("");
 
   refreshIcons();
+}
+
+function cardRelationship(t) {
+
+  const previous =
+    tools.filter(
+      candidate =>
+        (t.dependsOn || []).includes(candidate.id)
+    );
+
+  const next =
+    tools.filter(
+      candidate =>
+        (candidate.dependsOn || []).includes(t.id)
+    );
+
+  if (!previous.length && !next.length) return "";
+
+  const sequence = (first, second) => `
+    <div class="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
+      <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-900 font-semibold text-white dark:bg-white dark:text-slate-900">1</span>
+      <span class="max-w-[38%] truncate font-medium" title="${escapeHtml(first.name)}">${escapeHtml(first.name)}</span>
+      <i data-lucide="arrow-right" class="h-3 w-3 shrink-0 text-slate-400"></i>
+      <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-slate-300 font-semibold dark:border-slate-600">2</span>
+      <span class="max-w-[38%] truncate font-medium" title="${escapeHtml(second.name)}">${escapeHtml(second.name)}</span>
+    </div>
+  `;
+
+  return `
+    <div class="mt-4 space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/70">
+      <p class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+        ${icon("git-branch", "h-3.5 w-3.5")}
+        Flujo relacionado
+      </p>
+      ${next.length ? next.map(item => sequence(t, item)).join("") : ""}
+      ${previous.length ? previous.map(item => sequence(item, t)).join("") : ""}
+    </div>
+  `;
 }
 
 function toolCard(t) {
@@ -283,14 +463,16 @@ function toolCard(t) {
 
           ${riskBadge(t.analysis)}
 
-          <button
-            data-edit-tool="${t.id}"
-            aria-label="Editar ${escapeHtml(t.name)}"
-            title="Editar herramienta"
-            class="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-          >
-            ${icon("pencil", "h-4 w-4")}
-          </button>
+          ${isAdmin() ? `
+            <button
+              data-edit-tool="${t.id}"
+              aria-label="Editar ${escapeHtml(t.name)}"
+              title="Editar herramienta"
+              class="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+            >
+              ${icon("pencil", "h-4 w-4")}
+            </button>
+          ` : ""}
 
         </div>
 
@@ -312,7 +494,9 @@ function toolCard(t) {
         ${cats}
       </div>
 
-      <div class="mt-5 flex items-center justify-between border-t border-slate-100 pt-4 dark:border-slate-800">
+      ${cardRelationship(t)}
+
+      <div class="mt-auto flex items-center justify-between border-t border-slate-100 pt-4 dark:border-slate-800">
 
         <span class="text-xs text-slate-400">
           ${escapeHtml(t.language)}
@@ -320,14 +504,16 @@ function toolCard(t) {
 
         <div class="flex items-center gap-3">
 
-          <button
-            data-delete-tool="${t.id}"
-            aria-label="Eliminar ${escapeHtml(t.name)}"
-            title="Eliminar herramienta"
-            class="rounded-lg p-2 text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-400"
-          >
-            ${icon("trash-2", "h-4 w-4")}
-          </button>
+          ${isAdmin() ? `
+            <button
+              data-delete-tool="${t.id}"
+              aria-label="Eliminar ${escapeHtml(t.name)}"
+              title="Eliminar herramienta"
+              class="rounded-lg p-2 text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+            >
+              ${icon("trash-2", "h-4 w-4")}
+            </button>
+          ` : ""}
 
           <button
             data-open-tool="${t.id}"
@@ -455,6 +641,163 @@ function updateCategoryFilter() {
   }
 }
 
+function updateRelationshipManager() {
+  const fromStep = document.getElementById("relationStepFrom");
+  const toStep = document.getElementById("relationStepTo");
+
+  if (!fromStep || !toStep) return;
+
+  const renderStep = (step, number, title, selectedId) => `
+    <div class="flex items-center gap-3">
+      <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white dark:bg-white dark:text-slate-900">${number}</span>
+      <div>
+        <p class="text-sm font-semibold">${title}</p>
+        <p class="text-xs text-slate-500 dark:text-slate-400">Selecciona una herramienta</p>
+      </div>
+    </div>
+    <div class="mt-3 grid gap-2">
+      ${tools.length
+        ? tools.map(tool => `
+          <button type="button" data-relation-slot="${step}" data-tool-id="${escapeHtml(tool.id)}" class="flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2 text-left text-sm transition ${selectedId === tool.id ? "border-slate-900 bg-white font-semibold shadow-sm dark:border-white dark:bg-slate-900" : "border-slate-200 bg-white/60 hover:border-slate-400 dark:border-slate-700 dark:bg-slate-900/50 dark:hover:border-slate-500"}">
+            <span class="h-2 w-2 shrink-0 rounded-full ${selectedId === tool.id ? "bg-emerald-500" : "bg-slate-300 dark:bg-slate-600"}"></span>
+            <span class="truncate">${escapeHtml(tool.name)}</span>
+          </button>
+        `).join("")
+        : `<p class="text-sm text-slate-500">No hay herramientas disponibles.</p>`}
+    </div>
+  `;
+
+  fromStep.innerHTML = renderStep("from", "1", "Primero", selectedRelation.from);
+  toStep.innerHTML = renderStep("to", "2", "Después", selectedRelation.to);
+
+  const addButton = document.getElementById("addRelation");
+  if (addButton) {
+    addButton.disabled = !selectedRelation.from || !selectedRelation.to || selectedRelation.from === selectedRelation.to;
+  }
+
+  renderRelationshipList();
+}
+
+function renderRelationshipList() {
+
+  const list =
+    document.getElementById(
+      "relationList"
+    );
+
+  if (!list) return;
+
+  const relationships = [];
+
+  tools.forEach(
+    tool => {
+      (tool.dependsOn || []).forEach(
+        previousId => {
+          const previous =
+            tools.find(
+              item => item.id === previousId
+            );
+
+          if (previous) {
+            relationships.push({
+              from: previous,
+              to: tool
+            });
+          }
+        }
+      );
+    }
+  );
+
+  if (!relationships.length) {
+    list.innerHTML =
+      `<div class="rounded-2xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700">Todavía no hay relaciones definidas.</div>`;
+    return;
+  }
+
+  list.innerHTML =
+    relationships
+      .map(
+        relation => `
+          <div class="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
+            <div class="flex min-w-0 items-center gap-3 text-sm">
+              <div class="flex shrink-0 items-center gap-1 text-xs font-semibold text-slate-400">
+                <span class="flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-white dark:bg-white dark:text-slate-900">1</span>
+                <i data-lucide="arrow-right" class="h-3 w-3"></i>
+                <span class="flex h-6 w-6 items-center justify-center rounded-full border border-slate-300 dark:border-slate-600">2</span>
+              </div>
+              <div class="min-w-0">
+                <p class="truncate font-medium">${escapeHtml(relation.from.name)}</p>
+                <p class="truncate text-xs text-slate-500 dark:text-slate-400">después: ${escapeHtml(relation.to.name)}</p>
+              </div>
+            </div>
+            <button data-remove-relation="${relation.to.id}" data-previous-id="${relation.from.id}" type="button" class="shrink-0 rounded-lg p-2 text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30" title="Quitar relación" aria-label="Quitar relación">
+              ${icon("x", "h-4 w-4")}
+            </button>
+          </div>
+        `
+      )
+      .join("");
+
+  refreshIcons();
+}
+
+function addRelationship() {
+
+  if (!isAdmin()) {
+    toast("Necesitas iniciar sesión como administrador.");
+    return;
+  }
+
+  const fromId = selectedRelation.from;
+  const toId = selectedRelation.to;
+
+  if (!fromId || !toId || fromId === toId) {
+    toast("Selecciona dos herramientas diferentes.");
+    return;
+  }
+
+  const target =
+    tools.find(
+      tool => tool.id === toId
+    );
+
+  if (!target) return;
+
+  target.dependsOn = [
+    ...new Set([
+      ...(target.dependsOn || []),
+      fromId
+    ])
+  ];
+
+  saveTools();
+  selectedRelation = { from: "", to: "" };
+  renderAll();
+  toast("Relación añadida.");
+}
+
+function removeRelationship(toId, fromId) {
+
+  if (!isAdmin()) return;
+
+  const target =
+    tools.find(
+      tool => tool.id === toId
+    );
+
+  if (!target) return;
+
+  target.dependsOn =
+    (target.dependsOn || []).filter(
+      id => id !== fromId
+    );
+
+  saveTools();
+  renderAll();
+  toast("Relación eliminada.");
+}
+
 function renderLibrary() {
 
   const q =
@@ -536,6 +879,17 @@ function renderLibrary() {
 
 function deleteTool(id) {
 
+  const actionToken =
+    createAdminActionToken(
+      "delete",
+      id
+    );
+
+  if (!consumeAdminActionToken(actionToken, "delete", id)) {
+    toast("Necesitas iniciar sesión como administrador.");
+    return;
+  }
+
   const tool =
     tools.find(
       x => x.id === id
@@ -559,6 +913,17 @@ function deleteTool(id) {
 
 function editTool(id) {
 
+  const actionToken =
+    createAdminActionToken(
+      "edit",
+      id
+    );
+
+  if (!consumeAdminActionToken(actionToken, "edit", id)) {
+    toast("Necesitas iniciar sesión como administrador.");
+    return;
+  }
+
   const tool =
     tools.find(
       x => x.id === id
@@ -578,10 +943,9 @@ function editTool(id) {
     fCategories: (tool.categories || []).join(", "),
     fCode: tool.code,
     fPurpose: tool.purpose,
-    fProblem: tool.problem,
     fRequirements: tool.requirements,
-    fOutput: tool.output,
-    fWarnings: tool.warnings
+    fHowToUse: tool.analysis?.howToUse,
+    fExampleResult: tool.analysis?.exampleResult || tool.output
   };
 
   Object.entries(values).forEach(
@@ -605,6 +969,7 @@ function editTool(id) {
   if (label) {
     label.innerHTML =
       `${icon("save", "h-4 w-4")} Guardar cambios`;
+    refreshIcons();
   }
 
   const detailModal =
@@ -619,6 +984,50 @@ function editTool(id) {
   }
 
   showView("new");
+}
+
+function resetToolForm() {
+
+  aiAnalyzedTool =
+    null;
+
+  editingToolId =
+    null;
+
+  const form =
+    document.getElementById(
+      "toolForm"
+    );
+
+  if (form) {
+    form.reset();
+  }
+
+  const status =
+    document.getElementById(
+      "aiStatus"
+    );
+
+  if (status) {
+    status.classList.add(
+      "hidden"
+    );
+    status.innerHTML = "";
+  }
+
+  const label =
+    document.getElementById(
+      "analyzeButtonLabel"
+    );
+
+  if (label) {
+    label.innerHTML =
+      `${icon(
+        "sparkles",
+        "h-4 w-4"
+      )} Analizar con IA`;
+    refreshIcons();
+  }
 }
 
 function openTool(id) {
@@ -660,122 +1069,42 @@ function openTool(id) {
 
   modalBody.innerHTML = `
 
-    <div class="grid gap-5 lg:grid-cols-5">
+    <div class="grid gap-3 lg:grid-cols-5">
 
-      <div class="space-y-5 lg:col-span-3">
+      <div class="space-y-3 lg:col-span-3">
 
-        <div class="rounded-2xl border border-slate-200 p-5 dark:border-slate-800">
-
-          <div class="flex items-center justify-between gap-3">
-
-            <h3 class="font-semibold">
-              Descripción
-            </h3>
-
-            ${riskBadge(t.analysis)}
-
-          </div>
-
-          <p class="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
-            ${escapeHtml(
-              t.purpose ||
-              t.analysis?.summary ||
-              ""
-            )}
-          </p>
-
+        <div class="flex gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+          ${icon("shield-alert", "mt-0.5 h-4 w-4 shrink-0")}
+          <p><strong>Antes de ejecutar:</strong> haz una copia de respaldo y prueba siempre sobre la copia, nunca sobre los archivos originales.</p>
         </div>
 
-        ${detailBlock(
-          "¿Qué problema soluciona?",
-          t.problem
-        )}
+      <div class="rounded-2xl border border-slate-200 p-4 dark:border-slate-800">
+        <div class="flex items-center justify-between gap-3">
+          <h3 class="font-semibold">Descripción</h3>
+          ${riskBadge(t.analysis)}
+        </div>
+        <p class="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
+          ${escapeHtml(t.purpose || t.analysis?.summary || "Sin descripción.")}
+        </p>
+      </div>
 
-        ${detailBlock(
-          "¿Qué necesita?",
-          t.requirements
-        )}
+      ${detailBlock(
+        "Lo que necesita",
+        t.requirements || "No se especificaron requisitos."
+      )}
 
-        ${detailBlock(
-          "¿Qué resultado produce?",
-          t.output
-        )}
+      ${relationshipBlock(t)}
 
-        ${detailBlock(
-          "Advertencias",
-          t.warnings
-        )}
+      ${workflowBlock(
+        t.analysis?.howToUse
+      )}
 
-        ${t.analysis?.howToUse
-          ? detailBlock(
-              "Cómo utilizarla",
-              t.analysis.howToUse
-            )
-          : ""
-        }
-
-        ${t.analysis?.inputs
-          ? detailBlock(
-              "Entradas",
-              t.analysis.inputs
-            )
-          : ""
-        }
-
-        ${t.analysis?.filesAffected
-          ? detailBlock(
-              "Archivos afectados",
-              t.analysis.filesAffected
-            )
-          : ""
-        }
-
-        ${
-          t.analysis?.detectedActions?.length
-
-            ? `
-
-              <div class="rounded-2xl border border-slate-200 p-5 dark:border-slate-800">
-
-                <h3 class="font-semibold">
-                  Acciones detectadas
-                </h3>
-
-                <div class="mt-3 flex flex-wrap gap-2">
-
-                  ${t.analysis.detectedActions
-                    .map(
-                      x => `
-                        <span class="rounded-full bg-slate-100 px-3 py-1.5 text-xs dark:bg-slate-800">
-                          ${escapeHtml(x)}
-                        </span>
-                      `
-                    )
-                    .join("")
-                  }
-
-                </div>
-
-                ${
-                  t.analysis.riskReason
-
-                    ? `
-                      <p class="mt-3 text-xs leading-5 text-slate-500 dark:text-slate-400">
-                        ${escapeHtml(
-                          t.analysis.riskReason
-                        )}
-                      </p>
-                    `
-
-                    : ""
-                }
-
-              </div>
-
-            `
-
-            : ""
-        }
+      ${detailBlock(
+        "Ejemplo real del resultado",
+        t.analysis?.exampleResult ||
+        t.output ||
+        "La herramienta no especificó un resultado."
+      )}
 
       </div>
 
@@ -784,17 +1113,13 @@ function openTool(id) {
         <div class="sticky top-0 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800">
 
           <div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-950">
-
-            <span class="text-xs font-medium">
-              Código
-            </span>
+            <span class="text-xs font-medium">Código</span>
 
             <div class="flex gap-1">
-
               <button
                 id="copyCode"
                 class="rounded-lg p-2 hover:bg-slate-200 dark:hover:bg-slate-800"
-                title="Copiar"
+                title="Copiar código"
               >
                 ${icon("copy", "h-4 w-4")}
               </button>
@@ -802,16 +1127,14 @@ function openTool(id) {
               <button
                 id="downloadCode"
                 class="rounded-lg p-2 hover:bg-slate-200 dark:hover:bg-slate-800"
-                title="Descargar"
+                title="Descargar código"
               >
                 ${icon("download", "h-4 w-4")}
               </button>
-
             </div>
-
           </div>
 
-          <pre class="code-font max-h-[65vh] overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words bg-slate-950 p-4 text-xs leading-5 text-slate-100 scrollbar"><code>${escapeHtml(t.code)}</code></pre>
+          <pre class="code-font max-h-[65vh] overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words bg-slate-950 p-4 text-xs leading-5 text-slate-100 scrollbar"><code>${escapeHtml(t.code || "Código no disponible.")}</code></pre>
 
         </div>
 
@@ -826,17 +1149,13 @@ function openTool(id) {
     );
 
   if (copy) {
-
     copy.onclick =
       async () => {
-
         await navigator.clipboard.writeText(
-          t.code
+          t.code || ""
         );
 
-        toast(
-          "Código copiado."
-        );
+        toast("Código copiado.");
       };
   }
 
@@ -846,12 +1165,10 @@ function openTool(id) {
     );
 
   if (download) {
-
     download.onclick =
       () => {
-
         downloadText(
-          t.code,
+          t.code || "",
           `${slugify(t.name)}.${extensionFor(t.language)}`
         );
       };
@@ -881,16 +1198,121 @@ function detailBlock(
 
   return `
 
-    <div class="rounded-2xl border border-slate-200 p-5 dark:border-slate-800">
+    <div class="rounded-2xl border border-slate-200 p-3 dark:border-slate-800">
 
       <h3 class="font-semibold">
         ${escapeHtml(title)}
       </h3>
 
-      <p class="mt-3 whitespace-pre-line text-sm leading-6 text-slate-600 dark:text-slate-300">
+      <p class="mt-2 whitespace-pre-line text-sm leading-6 text-slate-600 dark:text-slate-300">
         ${escapeHtml(text)}
       </p>
 
+    </div>
+
+  `;
+}
+
+function workflowBlock(text) {
+
+  const steps =
+    String(
+      text ||
+      "Sigue las instrucciones indicadas para ejecutar la herramienta."
+    )
+      .split(/\r?\n+/)
+      .map(
+        step =>
+          step
+            .replace(/^\s*(?:\d+[.)]|[-*])\s*/, "")
+            .trim()
+      )
+      .filter(Boolean);
+
+  return `
+
+    <div class="rounded-2xl border border-slate-200 p-3 dark:border-slate-800">
+
+      <h3 class="font-semibold">
+        Cómo se trabaja
+      </h3>
+
+      <div class="mt-3 space-y-2">
+
+        ${steps
+          .map(
+            (step, index) => `
+              <div class="workflow-step flex items-start gap-3 rounded-xl bg-slate-50 p-3 dark:bg-slate-800/70">
+                <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-xs font-semibold text-white dark:bg-white dark:text-slate-900">
+                  ${index + 1}
+                </span>
+                <p class="pt-1 text-sm leading-5 text-slate-600 dark:text-slate-300">
+                  ${escapeHtml(step)}
+                </p>
+              </div>
+            `
+          )
+          .join("")}
+
+      </div>
+
+    </div>
+
+  `;
+}
+
+function relationshipBlock(tool) {
+
+  const previous =
+    tools.filter(
+      candidate =>
+        (tool.dependsOn || []).includes(candidate.id)
+    );
+
+  const next =
+    tools.filter(
+      candidate =>
+        (candidate.dependsOn || []).includes(tool.id)
+    );
+
+  if (!previous.length && !next.length) {
+    return "";
+  }
+
+  const toolNames = list =>
+    list
+      .map(
+        item => `
+          <span class="rounded-full bg-slate-100 px-3 py-1.5 text-xs dark:bg-slate-800">
+            ${escapeHtml(item.name)}
+          </span>
+        `
+      )
+      .join("");
+
+  return `
+
+    <div class="rounded-2xl border border-slate-200 p-3 dark:border-slate-800">
+      <div class="flex items-center gap-2">
+        ${icon("git-branch", "h-4 w-4 text-slate-500")}
+        <h3 class="font-semibold">Flujo relacionado</h3>
+      </div>
+
+      ${previous.length
+        ? `
+          <p class="mt-3 text-xs font-medium uppercase tracking-wide text-slate-400">Se ejecuta después de</p>
+          <div class="mt-2 flex flex-wrap gap-2">${toolNames(previous)}</div>
+        `
+        : ""
+      }
+
+      ${next.length
+        ? `
+          <p class="mt-3 text-xs font-medium uppercase tracking-wide text-slate-400">Después se puede ejecutar</p>
+          <div class="mt-2 flex flex-wrap gap-2">${toolNames(next)}</div>
+        `
+        : ""
+      }
     </div>
 
   `;
@@ -1238,6 +1660,7 @@ Analiza especialmente:
 - bases de datos
 - comandos externos
 - pasos de utilización
+- ejemplo concreto del resultado antes y después
 - advertencias
 - nivel de riesgo
 
@@ -1265,6 +1688,7 @@ Utiliza exactamente esta estructura:
   "problem": "",
   "requirements": "",
   "output": "",
+  "exampleResult": "",
   "warnings": "",
   "howToUse": "",
   "inputs": "",
@@ -1312,6 +1736,16 @@ Incluye si detectas:
 output:
 Explica exactamente qué resultado produce.
 
+exampleResult:
+Escribe un ejemplo concreto, fácil de comprobar y explicado con palabras reales.
+Debes inspeccionar el código antes de responder y detectar textos literales usados en -replace, .Replace(), Rename-Item, expresiones regulares, prefijos o sufijos.
+Si el código cambia un texto, muestra exactamente: "Pasó de TEXTO_ORIGINAL a TEXTO_NUEVO".
+Si cambia el nombre de un archivo, muestra también la extensión: "archivo_original.pdf -> archivo_nuevo.pdf".
+Ejemplo de formato: "Pasó de HCCONTROLPRENATAL a _HCCONTROLPRENATAL_".
+Ese ejemplo solo explica el formato: reemplázalo por los valores reales encontrados en el código.
+No escribas "No determinado" si el código contiene el texto original, el texto nuevo, un prefijo, un sufijo o una regla clara de reemplazo.
+Usa "No determinado" únicamente cuando después de revisar todo el código no exista ninguna transformación concreta que pueda ejemplificarse.
+
 warnings:
 Advierte sobre:
 
@@ -1325,8 +1759,17 @@ Advierte sobre:
 - datos sensibles
 - operaciones irreversibles
 
+Si el código modifica, renombra, mueve o elimina archivos, incluye siempre esta recomendación:
+"Haz una copia de respaldo y prueba primero sobre una copia; no trabajes sobre los archivos originales."
+
 howToUse:
-Explica paso a paso cómo debería utilizarse según el código.
+Explica cómo se trabaja con la herramienta en pasos simples y concretos.
+Devuelve cada paso en una línea separada y numerada, usando exactamente este estilo:
+1. Abrir la carpeta de pacientes.
+2. Escribir la ruta del archivo Excel.
+3. Confirmar el procesamiento.
+4. Revisar el resultado generado.
+Usa verbos de acción y palabras que entienda una persona no técnica.
 
 inputs:
 Archivos, carpetas, parámetros, rutas o datos necesarios.
@@ -1760,24 +2203,52 @@ function fillFormFromAI(
   );
 
   setField(
-    "fProblem",
-    result.problem
-  );
-
-  setField(
     "fRequirements",
     result.requirements
   );
 
   setField(
-    "fOutput",
-    result.output
+    "fHowToUse",
+    result.howToUse
   );
 
   setField(
-    "fWarnings",
-    result.warnings
+    "fExampleResult",
+    result.exampleResult || result.output
   );
+}
+
+function concreteExample(
+  value,
+  code
+) {
+  const text =
+    String(value || "").trim();
+
+  if (
+    text &&
+    !/no determinado|no se puede determinar/i.test(text)
+  ) {
+    return text;
+  }
+
+  const replaceMatch = code.match(
+    /-replace\s+(["'])(.*?)\1\s*,\s*(["'])(.*?)\3/is
+  );
+
+  if (replaceMatch) {
+    return `Pasó de ${replaceMatch[2]} a ${replaceMatch[4]}.`;
+  }
+
+  const methodMatch = code.match(
+    /\.Replace\(\s*(["'])(.*?)\1\s*,\s*(["'])(.*?)\3\s*\)/is
+  );
+
+  if (methodMatch) {
+    return `Pasó de ${methodMatch[2]} a ${methodMatch[4]}.`;
+  }
+
+  return text || "No determinado";
 }
 
 
@@ -1942,6 +2413,8 @@ async function submitTool(e) {
         "loader-circle",
         "h-4 w-4 animate-spin"
       )} Analizando...`;
+
+    refreshIcons();
   }
 
   showAiStatus(
@@ -1965,6 +2438,12 @@ async function submitTool(e) {
       "Resultado de Gemini:",
       result
     );
+
+    result.exampleResult =
+      concreteExample(
+        result.exampleResult || result.output,
+        code
+      );
 
     aiAnalyzedTool = {
 
@@ -2045,6 +2524,11 @@ async function submitTool(e) {
           result.howToUse ||
           "",
 
+        exampleResult:
+          result.exampleResult ||
+          result.output ||
+          "",
+
         inputs:
           result.inputs ||
           "",
@@ -2079,6 +2563,8 @@ async function submitTool(e) {
           "save",
           "h-4 w-4"
         )} Guardar herramienta`;
+
+      refreshIcons();
     }
 
     toast(
@@ -2124,6 +2610,26 @@ async function submitTool(e) {
    ========================================================= */
 
 function saveAnalyzedToolFromForm() {
+
+  const action =
+    editingToolId
+      ? "edit"
+      : "create";
+
+  const actionId =
+    editingToolId ||
+    "new";
+
+  const actionToken =
+    createAdminActionToken(
+      action,
+      actionId
+    );
+
+  if (!consumeAdminActionToken(actionToken, action, actionId)) {
+    toast("Necesitas iniciar sesión como administrador.");
+    return false;
+  }
 
   if (!aiAnalyzedTool) {
 
@@ -2176,14 +2682,6 @@ function saveAnalyzedToolFromForm() {
       ?.value
       .trim() || "";
 
-  const problem =
-    document
-      .getElementById(
-        "fProblem"
-      )
-      ?.value
-      .trim() || "";
-
   const requirements =
     document
       .getElementById(
@@ -2192,18 +2690,18 @@ function saveAnalyzedToolFromForm() {
       ?.value
       .trim() || "";
 
-  const output =
+  const howToUse =
     document
       .getElementById(
-        "fOutput"
+        "fHowToUse"
       )
       ?.value
       .trim() || "";
 
-  const warnings =
+  const exampleResult =
     document
       .getElementById(
-        "fWarnings"
+        "fExampleResult"
       )
       ?.value
       .trim() || "";
@@ -2222,13 +2720,27 @@ function saveAnalyzedToolFromForm() {
 
     purpose,
 
-    problem,
+    problem:
+      aiAnalyzedTool.problem ||
+      "",
 
     requirements,
 
-    output,
+    dependsOn:
+      aiAnalyzedTool.dependsOn ||
+      [],
 
-    warnings
+    output: exampleResult,
+
+    warnings:
+      aiAnalyzedTool.warnings ||
+      "",
+
+    analysis: {
+      ...(aiAnalyzedTool.analysis || {}),
+      howToUse,
+      exampleResult
+    }
   };
 
   const existingIndex =
@@ -2361,6 +2873,17 @@ function importLibrary(
   file
 ) {
 
+  const actionToken =
+    createAdminActionToken(
+      "import",
+      "library"
+    );
+
+  if (!consumeAdminActionToken(actionToken, "import", "library")) {
+    toast("Necesitas iniciar sesión como administrador.");
+    return;
+  }
+
   const reader =
     new FileReader();
 
@@ -2415,8 +2938,28 @@ function importLibrary(
    ========================================================= */
 
 function showView(
-  view
+  view,
+  options = {}
 ) {
+
+  const currentView =
+    document.querySelector(
+      ".view:not(.hidden)"
+    )?.id.replace(
+      "view-",
+      ""
+    );
+
+  if (
+    options.updateHistory !== false &&
+    currentView !== view
+  ) {
+    history.pushState(
+      { view },
+      "",
+      `#${view}`
+    );
+  }
 
   document
     .querySelectorAll(
@@ -2438,6 +2981,16 @@ function showView(
 
     target.classList.remove(
       "hidden"
+    );
+
+    target.classList.remove(
+      "view-fade-in"
+    );
+
+    void target.offsetWidth;
+
+    target.classList.add(
+      "view-fade-in"
     );
   }
 
@@ -2546,15 +3099,37 @@ function showView(
 
 function renderAll() {
 
+  updateAdminControls();
+
   renderStats();
 
   renderRecent();
 
   updateCategoryFilter();
 
+  updateRelationshipManager();
+
   renderLibrary();
 
   refreshIcons();
+}
+
+function updateAdminControls() {
+
+  document
+    .querySelectorAll(
+      "[data-admin-only]"
+    )
+    .forEach(
+      element => {
+        element.classList.toggle(
+          "hidden",
+          !isAdmin()
+        );
+      }
+    );
+
+  updateAdminButton();
 }
 
 
@@ -2632,6 +3207,84 @@ document.addEventListener(
   "click",
   e => {
 
+    const relationChoice =
+      e.target.closest(
+        "[data-relation-slot]"
+      );
+
+    if (relationChoice) {
+      selectedRelation[
+        relationChoice.dataset.relationSlot
+      ] = relationChoice.dataset.toolId;
+      updateRelationshipManager();
+      return;
+    }
+
+    const addRelationButton =
+      e.target.closest(
+        "#addRelation"
+      );
+
+    if (addRelationButton) {
+      addRelationship();
+      return;
+    }
+
+    const removeRelationButton =
+      e.target.closest(
+        "[data-remove-relation]"
+      );
+
+    if (removeRelationButton) {
+      removeRelationship(
+        removeRelationButton.dataset.removeRelation,
+        removeRelationButton.dataset.previousId
+      );
+      return;
+    }
+
+    const kpi =
+      e.target.closest(
+        "[data-kpi-filter]"
+      );
+
+    if (kpi) {
+      const search =
+        document.getElementById(
+          "toolSearch"
+        );
+
+      const category =
+        document.getElementById(
+          "categoryFilter"
+        );
+
+      if (search) {
+        search.value =
+          kpi.dataset.kpiFilter === "all"
+            ? ""
+            : kpi.dataset.kpiFilter;
+      }
+
+      if (category) {
+        category.value = "";
+      }
+
+      showView("tools");
+      renderLibrary();
+      return;
+    }
+
+    const adminAccess =
+      e.target.closest(
+        "#adminAccess"
+      );
+
+    if (adminAccess) {
+      requestAdminAccess();
+      return;
+    }
+
     const editButton =
       e.target.closest(
         "[data-edit-tool]"
@@ -2660,12 +3313,33 @@ document.addEventListener(
       return;
     }
 
+    const cancelToolForm =
+      e.target.closest(
+        "[data-cancel-tool-form]"
+      );
+
+    if (cancelToolForm) {
+      resetToolForm();
+    }
+
     const viewButton =
       e.target.closest(
         "[data-view]"
       );
 
     if (viewButton) {
+
+      if (
+        viewButton.hasAttribute("data-admin-only") &&
+        !isAdmin()
+      ) {
+        toast("Necesitas iniciar sesión como administrador.");
+        return;
+      }
+
+      if (viewButton.dataset.view === "new") {
+        resetToolForm();
+      }
 
       showView(
         viewButton.dataset.view
@@ -2687,6 +3361,61 @@ document.addEventListener(
 );
 
 
+const adminForm =
+  document.getElementById(
+    "adminForm"
+  );
+
+if (adminForm) {
+  adminForm.addEventListener(
+    "submit",
+    e => {
+      e.preventDefault();
+      authenticateAdmin();
+    }
+  );
+}
+
+const closeAdminModalButton =
+  document.getElementById(
+    "closeAdminModal"
+  );
+
+if (closeAdminModalButton) {
+  closeAdminModalButton.addEventListener(
+    "click",
+    closeAdminAccess
+  );
+}
+
+const cancelAdminModalButton =
+  document.getElementById(
+    "cancelAdminModal"
+  );
+
+if (cancelAdminModalButton) {
+  cancelAdminModalButton.addEventListener(
+    "click",
+    closeAdminAccess
+  );
+}
+
+const adminModal =
+  document.getElementById(
+    "adminModal"
+  );
+
+if (adminModal) {
+  adminModal.addEventListener(
+    "click",
+    e => {
+      if (e.target === adminModal) {
+        closeAdminAccess();
+      }
+    }
+  );
+}
+
 /* =========================================================
    FORMULARIO
    ========================================================= */
@@ -2701,6 +3430,12 @@ if (toolForm) {
   toolForm.addEventListener(
     "submit",
     e => {
+
+      if (!isAdmin()) {
+        e.preventDefault();
+        toast("Necesitas iniciar sesión como administrador.");
+        return;
+      }
 
       /*
        * Primera pulsación:
@@ -2743,7 +3478,19 @@ if (toolSearch) {
 
   toolSearch.addEventListener(
     "input",
-    renderLibrary
+    e => {
+      const globalSearch =
+        document.getElementById(
+          "globalSearch"
+        );
+
+      if (globalSearch) {
+        globalSearch.value =
+          e.target.value;
+      }
+
+      renderLibrary();
+    }
   );
 }
 
@@ -2784,9 +3531,22 @@ if (globalSearch) {
           e.target.value;
       }
 
-      showView(
-        "tools"
-      );
+      const toolsView =
+        document.getElementById(
+          "view-tools"
+        );
+
+      if (toolsView?.classList.contains("hidden")) {
+        showView("tools");
+      }
+
+      if (search) {
+        search.focus();
+        search.setSelectionRange(
+          search.value.length,
+          search.value.length
+        );
+      }
 
       renderLibrary();
     }
@@ -3054,6 +3814,52 @@ if (importInput) {
 /* =========================================================
    INICIALIZACIÓN
    ========================================================= */
+
+const validViews = [
+  "dashboard",
+  "tools",
+  "new",
+  "import"
+];
+
+const hashView =
+  window.location.hash.replace(
+    "#",
+    ""
+  );
+
+const initialView =
+  validViews.includes(hashView)
+    ? hashView
+    : "dashboard";
+
+history.replaceState(
+  { view: initialView },
+  "",
+  `#${initialView}`
+);
+
+window.addEventListener(
+  "popstate",
+  e => {
+    const view =
+      validViews.includes(e.state?.view)
+        ? e.state.view
+        : "dashboard";
+
+    showView(
+      view,
+      { updateHistory: false }
+    );
+  }
+);
+
+if (initialView !== "dashboard") {
+  showView(
+    initialView,
+    { updateHistory: false }
+  );
+}
 
 initTheme();
 
