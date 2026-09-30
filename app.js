@@ -168,14 +168,51 @@ Get-ChildItem -Path $root -Recurse -Filter *.pdf |
   }
 ];
 
-function loadTools() {
+async function loadTools() {
   const saved = localStorage.getItem(STORAGE_KEY);
 
   if (saved) {
     try {
-      return JSON.parse(saved);
+      const parsed = JSON.parse(saved);
+
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
     } catch {}
   }
+
+  try {
+    const response = await fetch("./tools/item/info.json", {
+      cache: "no-store"
+    });
+
+    if (response.ok) {
+      const imported = await response.json();
+      const catalog = Array.isArray(imported)
+        ? imported
+        : [imported];
+
+      const loadedTools = catalog
+        .filter(item => item && typeof item === "object")
+        .map(item => ({
+          ...item,
+          id: item.id || crypto.randomUUID(),
+          createdAt: item.createdAt || new Date().toISOString(),
+          dependsOn: Array.isArray(item.dependsOn)
+            ? item.dependsOn
+            : []
+        }));
+
+      if (loadedTools.length) {
+        localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify(loadedTools)
+        );
+
+        return loadedTools;
+      }
+    }
+  } catch {}
 
   localStorage.setItem(
     STORAGE_KEY,
@@ -185,7 +222,7 @@ function loadTools() {
   return demoTools;
 }
 
-let tools = loadTools();
+let tools = [];
 let selectedRelation = { from: "", to: "" };
 
 function saveTools() {
@@ -3863,10 +3900,12 @@ if (initialView !== "dashboard") {
 
 initTheme();
 
-renderAll();
+loadTools().then(loadedTools => {
+  tools = loadedTools;
+  renderAll();
+  refreshIcons();
 
-refreshIcons();
-
-console.log(
-  "Toolbox IA iniciado correctamente."
-);
+  console.log(
+    `Toolbox IA iniciado correctamente con ${tools.length} herramientas.`
+  );
+});
