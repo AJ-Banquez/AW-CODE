@@ -23,16 +23,58 @@
     }
   </script>
 
+  <!-- Phosphor Duotone Icons -->
+  <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
+
   <!-- Lucide Icons CDN -->
   <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Supabase Auth and database client -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flowbite@2.5.2/dist/flowbite.min.js"></script>
 
   <style>
     body { font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
     .scrollbar::-webkit-scrollbar { width: 7px; height: 7px; }
     .scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 999px; }
     .dark .scrollbar::-webkit-scrollbar-thumb { background: #475569; }
+    .role-badge { display: inline-flex; align-items: center; width: fit-content; border-radius: .375rem; padding: .125rem .375rem; font-size: .75rem; line-height: 1rem; font-weight: 500; }
+    .role-manager { color: #92400e; background: #fef3c7; }
+    .role-employee { color: #166534; background: #dcfce7; }
+    .dark .role-manager { color: #fde68a; background: rgba(120, 53, 15, .45); }
+    .dark .role-employee { color: #bbf7d0; background: rgba(20, 83, 45, .45); }
     .modal-backdrop { backdrop-filter: blur(5px); }
     .code-font { font-family: "Cascadia Code", "Fira Code", Consolas, monospace; }
+    .tool-brand-badge { background-color: var(--brand-color); color: var(--glyph-color); }
+    .dark .tool-brand-badge { background-color: #172033; border-color: var(--brand-color); color: #fff; }
+    .dark .tool-brand-glyph { color: #fff !important; }
+    .relationship-flow { transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease; }
+    .relationship-flow:hover { border-color: #7dd3fc; box-shadow: 0 8px 22px rgba(14, 165, 233, 0.12); }
+    .relationship-energy { position: relative; flex: 1 1 28px; min-width: 28px; height: 2px; overflow: visible; background: linear-gradient(90deg, #cbd5e1, #38bdf8, #cbd5e1); background-size: 200% 100%; animation: relationshipFlow 1.8s linear infinite; }
+    .relationship-energy::after { content: ""; position: absolute; top: 50%; left: 0; width: 7px; height: 7px; border-radius: 999px; background: #e0f2fe; box-shadow: 0 0 0 2px #38bdf8, 0 0 12px 3px rgba(56, 189, 248, 0.65); transform: translate(-50%, -50%); animation: relationshipPulse 1.8s ease-in-out infinite; }
+    .relationship-flow:hover .relationship-energy { animation-duration: 0.85s; background-image: linear-gradient(90deg, #0ea5e9, #f0f9ff, #0ea5e9); }
+    .relationship-flow:hover .relationship-energy::after { animation-duration: 0.85s; }
+    .relationship-status { color: #0ea5e9; }
+    .dark .relationship-flow { background-color: rgba(30, 41, 59, 0.72); }
+    .dark .relationship-flow:hover { border-color: #38bdf8; box-shadow: 0 8px 24px rgba(14, 165, 233, 0.2); }
+    .dark .relationship-energy { background-image: linear-gradient(90deg, #475569, #38bdf8, #475569); }
+    @keyframes relationshipFlow { from { background-position: 0 0; } to { background-position: 200% 0; } }
+    @keyframes relationshipPulse { 0%, 100% { left: 0; opacity: .45; } 50% { left: 100%; opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { .relationship-energy, .relationship-energy::after { animation: none; } }
+    .relationship-layer { position: absolute; inset: 0; z-index: 30; pointer-events: none; overflow: visible; }
+    .relationship-canvas { display: block; width: 100%; height: 100%; overflow: visible; }
+    .relationship-link { pointer-events: auto; opacity: 1; transition: opacity 180ms ease; }
+    .relationship-link-path { fill: none; stroke: #5f8f89; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .72; }
+    .relationship-link-arrow { fill: #47756f; opacity: .82; }
+    .relationship-link.is-active, .relationship-link:hover { opacity: 1; }
+    .relationship-link.is-active .relationship-link-path, .relationship-link:hover .relationship-link-path { stroke: #0f766e; stroke-width: 2.5; opacity: 1; filter: drop-shadow(0 2px 4px rgba(15, 118, 110, .2)); }
+    .relationship-link.is-active .relationship-link-arrow, .relationship-link:hover .relationship-link-arrow { fill: #0f766e; opacity: 1; }
+    .relationship-step-badge { display: flex; align-items: center; justify-content: center; width: 1.5rem; height: 1.5rem; margin: 0 auto; border: 1px solid #86b9b2; border-radius: .75rem; line-height: 1; box-shadow: 0 2px 5px rgba(15, 118, 110, .14); }
+    .bg-brand-softer { background-color: #ecfdf5; }
+    .text-fg-brand-strong { color: #166534; }
+    .dark .relationship-link-path { stroke: #5f8f89; }
+    .dark .relationship-link-arrow { fill: #8ac0b8; }
+    .dark .bg-brand-softer { background-color: #123b36; }
+    .dark .text-fg-brand-strong { color: #a7f3d0; }
     @keyframes viewFadeIn {
       from { opacity: 0; transform: translateY(14px); }
       to { opacity: 1; transform: translateY(0); }
@@ -51,10 +93,54 @@
       .kpi-card { transition: none; }
       .workflow-step { animation: none; }
     }
+    #app { visibility: hidden; }
+    #app.is-ready { visibility: visible; }
+    #appLoader {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: grid;
+      place-items: center;
+      background: #f8fafc;
+      transition: opacity 220ms ease, visibility 220ms ease;
+    }
+    .dark #appLoader { background: #020617; }
+    #appLoader.is-hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+    .app-loader-card { display: grid; justify-items: center; gap: 14px; color: #475569; }
+    .dark .app-loader-card { color: #cbd5e1; }
+    .app-loader-mark {
+      display: grid;
+      width: 54px;
+      height: 54px;
+      place-items: center;
+      border-radius: 17px;
+      color: white;
+      background: #0f172a;
+      box-shadow: 0 12px 28px rgba(15, 23, 42, .2);
+    }
+    .app-loader-spinner {
+      width: 22px;
+      height: 22px;
+      border: 2px solid #cbd5e1;
+      border-top-color: #0f766e;
+      border-radius: 999px;
+      animation: appLoaderSpin .75s linear infinite;
+    }
+    @keyframes appLoaderSpin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .app-loader-spinner { animation: none; }
+    }
   </style>
 </head>
 
 <body class="h-full bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors">
+  <div id="appLoader" role="status" aria-live="polite">
+    <div class="app-loader-card">
+      <div class="app-loader-mark"><i data-lucide="wrench" width="25"></i></div>
+      <div class="app-loader-spinner" aria-hidden="true"></div>
+      <span>Cargando tu biblioteca...</span>
+    </div>
+  </div>
   <div id="app" class="min-h-full">
 
     <!-- Sidebar -->
@@ -78,23 +164,16 @@
           <button data-view="tools" class="nav-item flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
             <i data-lucide="library" class="h-4 w-4"></i> Biblioteca
           </button>
+          <button data-view="relations" data-admin-only class="nav-item hidden flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
+            <i data-lucide="git-branch" class="h-4 w-4"></i> Conexiones
+          </button>
           <button data-view="new" data-admin-only class="nav-item hidden flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
             <i data-lucide="plus-circle" class="h-4 w-4"></i> Agregar herramienta
-          </button>
-          <button data-view="import" data-admin-only class="nav-item hidden flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
-            <i data-lucide="upload" class="h-4 w-4"></i> Importar / exportar
           </button>
         </nav>
 
         <div class="border-t border-slate-200 p-4 dark:border-slate-800 space-y-2">
-          <button id="adminAccess" class="flex w-full items-center justify-between rounded-xl border border-amber-200 px-4 py-3 text-sm hover:bg-amber-50 dark:border-amber-900/50 dark:hover:bg-amber-950/30">
-            <span class="flex items-center gap-3">
-              <i data-lucide="shield" class="h-4 w-4"></i>
-              <span data-admin-label>Acceso administrador</span>
-            </span>
-            <i data-lucide="key-round" class="h-4 w-4 text-slate-400"></i>
-          </button>
-          <button id="aiSettings" class="flex w-full items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-sm hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">
+          <button id="aiSettings" class="hidden flex w-full items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-sm hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800" data-admin-only>
             <span class="flex items-center gap-3">
               <i data-lucide="bot" class="h-4 w-4"></i>
               <span>Configurar IA</span>
@@ -129,6 +208,28 @@
           <button data-view="new" data-admin-only class="hidden rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200">
             <span class="inline-flex items-center gap-2"><i data-lucide="plus" class="h-4 w-4"></i> Nueva herramienta</span>
           </button>
+          <div class="relative">
+            <button id="headerAuth" type="button" class="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-left shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800 dark:focus:ring-slate-800" aria-label="Abrir menú de usuario" aria-expanded="false">
+              <span id="headerUserAvatar" class="flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white dark:bg-white dark:text-slate-900">U</span>
+              <span class="hidden sm:block">
+                <span id="headerUserName" class="block max-w-40 truncate text-xs font-semibold">Usuario</span>
+                <span id="headerUserRole" class="role-badge role-employee">Empleado</span>
+              </span>
+              <i data-lucide="chevron-down" class="h-4 w-4 text-slate-400"></i>
+            </button>
+            <div id="userMenu" class="absolute right-0 top-[calc(100%+0.5rem)] z-50 hidden w-72 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg dark:divide-slate-700 dark:border-slate-700 dark:bg-slate-800">
+              <div class="px-4 py-3">
+                <div id="menuUserName" class="truncate text-sm font-semibold">Usuario</div>
+                <div id="menuUserEmail" class="truncate text-xs text-slate-500 dark:text-slate-400"></div>
+              </div>
+              <ul class="p-2 text-sm text-slate-700 dark:text-slate-200">
+                <li><button id="profileMenuButton" type="button" class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-slate-100 dark:hover:bg-slate-700"><i data-lucide="user-round" class="h-4 w-4"></i> Ver perfil</button></li>
+              </ul>
+              <div class="p-2">
+                <button id="logoutMenuButton" type="button" class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30"><i data-lucide="log-out" class="h-4 w-4"></i> Cerrar sesión</button>
+              </div>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -202,7 +303,16 @@
               </select>
             </div>
           </div>
-          <div id="relationsPanel" data-admin-only class="hidden rounded-3xl border border-slate-200 bg-white p-5 shadow-soft dark:border-slate-800 dark:bg-slate-900">
+          <div id="toolGrid" class="relative grid gap-7 md:grid-cols-2 xl:grid-cols-3"></div>
+        </section>
+
+        <!-- Connections -->
+        <section id="view-relations" data-admin-only class="view hidden space-y-6">
+          <div>
+            <h2 class="text-2xl font-semibold tracking-tight">Conectar herramientas</h2>
+            <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">Define qué herramienta debe ejecutarse primero y cuál después.</p>
+          </div>
+          <div id="relationsPanel" class="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft dark:border-slate-800 dark:bg-slate-900">
             <div class="flex items-start gap-3">
               <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800">
                 <i data-lucide="git-branch" class="h-5 w-5 text-slate-500"></i>
@@ -229,7 +339,6 @@
               <div id="relationList" class="mt-3 grid gap-2 sm:grid-cols-2"></div>
             </div>
           </div>
-          <div id="toolGrid" class="grid gap-5 md:grid-cols-2 xl:grid-cols-3"></div>
         </section>
 
         <!-- New -->
@@ -260,7 +369,7 @@
                   <label class="block">
                     <span class="text-sm font-medium">Lenguaje</span>
                     <select id="fLanguage" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800">
-                      <option>PowerShell</option><option>Python</option><option>SQL</option><option>JavaScript</option><option>VBA</option><option>Batch</option><option>PHP</option><option>Otro</option>
+                      <option>PowerShell</option><option>Excel</option><option>Word</option><option>Python</option><option>SQL</option><option>JavaScript</option><option>VBA</option><option>Batch</option><option>PHP</option><option>Otro</option>
                     </select>
                   </label>
                   <label class="block md:col-span-2">
@@ -311,31 +420,25 @@
           </div>
         </section>
 
-        <!-- Import -->
-        <section id="view-import" class="view hidden">
-          <div class="mx-auto max-w-4xl space-y-6">
-            <div>
-              <h2 class="text-2xl font-semibold tracking-tight">Importar / exportar</h2>
-              <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">Esta versión estática guarda las herramientas en el navegador. Exporta un JSON para llevarlas a otro equipo o repositorio.</p>
-            </div>
-            <div class="grid gap-5 md:grid-cols-2">
-              <div class="rounded-3xl border border-slate-200 bg-white p-6 shadow-soft dark:border-slate-800 dark:bg-slate-900">
-                <div class="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800"><i data-lucide="download" class="h-5 w-5"></i></div>
-                <h3 class="mt-4 font-semibold">Exportar biblioteca</h3>
-                <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">Descarga todas las fichas como un único archivo JSON.</p>
-                <button id="exportBtn" class="mt-5 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white dark:bg-white dark:text-slate-900">Exportar JSON</button>
-              </div>
-              <div class="rounded-3xl border border-slate-200 bg-white p-6 shadow-soft dark:border-slate-800 dark:bg-slate-900">
-                <div class="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800"><i data-lucide="upload" class="h-5 w-5"></i></div>
-                <h3 class="mt-4 font-semibold">Importar biblioteca</h3>
-                <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">Carga un JSON exportado anteriormente.</p>
-                <input id="importInput" type="file" accept=".json,application/json" class="mt-5 block w-full text-sm">
-              </div>
-            </div>
-            <div class="rounded-3xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
-              <div class="flex gap-3"><i data-lucide="info" class="mt-0.5 h-5 w-5 shrink-0"></i><div><strong>Importante:</strong> esta primera versión no escribe directamente en GitHub ni en una base de datos. La persistencia es local. Para compartir una biblioteca entre todo el equipo, el siguiente paso es conectar un repositorio o una API segura.</div></div>
-            </div>
+        <section id="view-profile" class="view hidden space-y-6">
+          <div>
+            <h2 class="text-2xl font-semibold tracking-tight">Mi perfil</h2>
+            <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">Administra tus datos personales y laborales.</p>
           </div>
+          <form id="profileForm" class="max-w-3xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:p-8">
+            <div class="mb-8 flex items-center gap-4 border-b border-slate-200 pb-6 dark:border-slate-700">
+              <div id="profileAvatar" class="flex h-16 w-16 items-center justify-center rounded-full bg-slate-900 text-lg font-semibold text-white dark:bg-white dark:text-slate-900">U</div>
+              <div><h3 id="profileHeading" class="text-lg font-semibold">Usuario</h3><p id="profileRole" class="role-badge role-employee">Empleado</p></div>
+            </div>
+            <div class="grid gap-5 sm:grid-cols-2">
+              <label for="profileFullName" class="block"><span class="mb-2.5 block text-sm font-medium text-slate-900 dark:text-white">Nombre completo</span><input id="profileFullName" class="block w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100 dark:border-slate-600 dark:bg-slate-800 dark:text-white dark:placeholder:text-slate-400 dark:focus:border-emerald-500 dark:focus:ring-emerald-900/40" placeholder="Nombre y apellido"></label>
+              <label for="profilePhone" class="block"><span class="mb-2.5 block text-sm font-medium text-slate-900 dark:text-white">Teléfono</span><input id="profilePhone" type="tel" class="block w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100 dark:border-slate-600 dark:bg-slate-800 dark:text-white dark:placeholder:text-slate-400 dark:focus:border-emerald-500 dark:focus:ring-emerald-900/40" placeholder="+57 300 000 0000"></label>
+              <label for="profileAge" class="block"><span class="mb-2.5 block text-sm font-medium text-slate-900 dark:text-white">Edad</span><input id="profileAge" type="number" min="0" max="120" class="block w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100 dark:border-slate-600 dark:bg-slate-800 dark:text-white dark:placeholder:text-slate-400 dark:focus:border-emerald-500 dark:focus:ring-emerald-900/40" placeholder="Edad"></label>
+              <label for="profilePosition" class="block"><span class="mb-2.5 block text-sm font-medium text-slate-900 dark:text-white">Cargo</span><input id="profilePosition" class="block w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100 dark:border-slate-600 dark:bg-slate-800 dark:text-white dark:placeholder:text-slate-400 dark:focus:border-emerald-500 dark:focus:ring-emerald-900/40" placeholder="Cargo en la organización"></label>
+              <label for="profileEmail" class="block sm:col-span-2"><span class="mb-2.5 block text-sm font-medium text-slate-900 dark:text-white">Correo electrónico</span><input id="profileEmail" type="email" readonly class="block w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2.5 text-sm text-slate-500 shadow-sm outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400"></label>
+            </div>
+            <div class="mt-8 flex justify-end"><button type="submit" class="rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-emerald-800 focus:outline-none focus:ring-4 focus:ring-emerald-200 dark:bg-emerald-600 dark:hover:bg-emerald-700 dark:focus:ring-emerald-900">Guardar cambios</button></div>
+          </form>
         </section>
       </main>
     </div>
@@ -346,8 +449,8 @@
         <div class="w-full rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
           <div class="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-800">
             <div>
-              <div class="font-semibold">Acceso administrador</div>
-              <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">Ingresa la contraseña para administrar la biblioteca.</div>
+              <div class="font-semibold">Acceso de usuario</div>
+              <div id="authDescription" class="mt-1 text-xs text-slate-500 dark:text-slate-400">Inicia sesión para administrar la biblioteca.</div>
             </div>
             <button id="closeAdminModal" type="button" class="rounded-lg p-2 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Cerrar">
               <i data-lucide="x" class="h-5 w-5"></i>
@@ -355,13 +458,20 @@
           </div>
           <form id="adminForm" class="space-y-4 p-5">
             <label class="block">
+              <span class="text-sm font-medium">Correo electrónico</span>
+              <input id="authEmail" type="email" autocomplete="email" required class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800" placeholder="tu@correo.com">
+            </label>
+            <label class="block">
               <span class="text-sm font-medium">Contraseña</span>
-              <input id="adminPassword" type="password" autocomplete="current-password" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800" placeholder="Escribe la contraseña">
+              <input id="authPassword" type="password" autocomplete="current-password" required minlength="6" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800" placeholder="Mínimo 6 caracteres">
             </label>
             <div class="flex justify-end gap-2">
               <button id="cancelAdminModal" type="button" class="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium dark:border-slate-700">Cancelar</button>
-              <button type="submit" class="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white dark:bg-white dark:text-slate-900">Entrar</button>
+              <button id="authSubmit" type="submit" class="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white dark:bg-white dark:text-slate-900">Entrar</button>
             </div>
+            <button id="googleAuth" type="button" class="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium dark:border-slate-700">
+              <i data-lucide="log-in" class="h-4 w-4"></i> Continuar con Google
+            </button>
           </form>
         </div>
       </div>
@@ -413,6 +523,16 @@
     </div>
 
     <div id="toast" class="fixed bottom-5 right-5 z-[60] hidden rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-xl dark:border-slate-700 dark:bg-slate-900"></div>
+    <div id="authGate" class="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-4">
+      <div class="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+        <div class="text-center">
+          <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-900 text-white dark:bg-white dark:text-slate-900"><i data-lucide="lock-keyhole" class="h-6 w-6"></i></div>
+          <h2 class="mt-4 text-xl font-semibold">Acceso privado</h2>
+          <p class="mt-2 text-sm text-slate-500 dark:text-slate-400">Inicia sesión para entrar a Toolbox IA.</p>
+          <button id="gateLogin" type="button" class="mt-5 w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white dark:bg-white dark:text-slate-900">Iniciar sesión</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="./app.js"></script>

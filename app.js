@@ -3,7 +3,149 @@ const THEME_KEY = "toolbox-ia-theme";
 const ADMIN_SESSION_KEY = "toolbox-ia-admin-session-v1";
 const ADMIN_ACTION_PREFIX = "toolbox-ia-admin-action-v1-";
 const ADMIN_SESSION_MS = 30 * 60 * 1000;
-const ADMIN_PASSWORD_HASH = "9275cc0b94ebcb97186606a28d8dd88cdbf5c83cf2a4452db265acad6ee4391b";
+const AUTHORIZED_EMAIL = "banquezbetancourt15@gmail.com";
+const SUPABASE_URL = "https://wzrvcioskqwixclbalzd.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_i4YoocPM-VP4VodsO_lzBQ__Mxq77po";
+const supabaseClient = window.supabase?.createClient(
+  SUPABASE_URL,
+  SUPABASE_PUBLISHABLE_KEY
+);
+let currentUser = null;
+
+function finishInitialLoad() {
+  document.getElementById("app")?.classList.add("is-ready");
+  document.getElementById("appLoader")?.classList.add("is-hidden");
+}
+
+function isAuthorizedUser(user) {
+  return Boolean(user?.email);
+}
+
+function getUserProfile(user = currentUser) {
+  const email = user?.email?.toLowerCase() || "";
+  const metadata = user?.user_metadata || {};
+  const isManager = email === AUTHORIZED_EMAIL;
+  const name = isManager
+    ? "Armando Banquez"
+    : metadata.full_name || metadata.name || email.split("@")[0] || "Usuario";
+
+  return {
+    name,
+    role: isManager ? "Manager" : "Empleado",
+    email,
+    initials: name
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map(part => part[0].toUpperCase())
+      .join("") || "U"
+  };
+}
+
+function updateUserProfile() {
+  const profile = getUserProfile();
+  const name = document.getElementById("headerUserName");
+  const role = document.getElementById("headerUserRole");
+  const email = document.getElementById("menuUserEmail");
+  const avatar = document.getElementById("headerUserAvatar");
+
+  if (!name || !role || !email || !avatar) return;
+
+  name.textContent = profile.name;
+  role.textContent = profile.role;
+  email.textContent = profile.email;
+  avatar.textContent = profile.initials;
+  role.className = `role-badge ${
+    profile.role === "Manager" ? "role-manager" : "role-employee"
+  }`;
+
+  const menuName = document.getElementById("menuUserName");
+  if (menuName) menuName.textContent = profile.name;
+  fillProfileForm(profile);
+}
+
+function fillProfileForm(profile = getUserProfile()) {
+  const metadata = currentUser?.user_metadata || {};
+  const fields = {
+    profileHeading: profile.name,
+    profileRole: profile.role,
+    profileAvatar: profile.initials,
+    profileFullName: metadata.full_name || metadata.name || profile.name,
+    profilePhone: metadata.phone || "",
+    profileAge: metadata.age || "",
+    profilePosition: metadata.position || (profile.role === "Manager" ? "Manager" : ""),
+    profileEmail: profile.email
+  };
+
+  Object.entries(fields).forEach(([id, value]) => {
+    const element = document.getElementById(id);
+    if (element) {
+      if ("value" in element) element.value = value;
+      else element.textContent = value;
+    }
+  });
+
+  const profileRole = document.getElementById("profileRole");
+  if (profileRole) {
+    profileRole.className = `role-badge ${
+      profile.role === "Manager" ? "role-manager" : "role-employee"
+    }`;
+  }
+}
+
+async function saveUserProfile(event) {
+  event.preventDefault();
+  if (!supabaseClient || !currentUser) return;
+
+  const fullName = document.getElementById("profileFullName")?.value.trim();
+  const phone = document.getElementById("profilePhone")?.value.trim();
+  const age = document.getElementById("profileAge")?.value.trim();
+  const position = document.getElementById("profilePosition")?.value.trim();
+
+  if (!fullName) {
+    toast("Escribe tu nombre completo.");
+    return;
+  }
+
+  const { data, error } = await supabaseClient.auth.updateUser({
+    data: {
+      ...currentUser.user_metadata,
+      full_name: fullName,
+      name: fullName,
+      phone,
+      age,
+      position
+    }
+  });
+
+  if (error) {
+    toast(`No se pudo guardar el perfil: ${error.message}`);
+    return;
+  }
+
+  currentUser = data.user;
+  updateUserProfile();
+  toast("Perfil actualizado.");
+}
+
+function updateAuthGate() {
+  const gate = document.getElementById("authGate");
+  const headerButton = document.getElementById("headerAuth");
+
+  if (!gate) return;
+
+  gate.classList.toggle("hidden", Boolean(currentUser));
+  gate.classList.toggle("flex", !currentUser);
+
+  if (headerButton) {
+    headerButton.setAttribute(
+      "aria-label",
+      currentUser ? "Cerrar sesión" : "Iniciar sesión"
+    );
+    headerButton.setAttribute("aria-expanded", "false");
+    refreshIcons();
+  }
+}
 
 async function hashText(value) {
   const bytes = new TextEncoder().encode(value);
@@ -15,22 +157,17 @@ async function hashText(value) {
 }
 
 function getAdminSession() {
-  try {
-    const session = JSON.parse(
-      sessionStorage.getItem(ADMIN_SESSION_KEY) || "null"
-    );
-
-    if (session?.expiresAt > Date.now()) {
-      return session;
-    }
-  } catch {}
-
-  sessionStorage.removeItem(ADMIN_SESSION_KEY);
-  return null;
+  return isManager()
+    ? { token: currentUser.id, expiresAt: Date.now() + ADMIN_SESSION_MS }
+    : null;
 }
 
 function isAdmin() {
   return Boolean(getAdminSession());
+}
+
+function isManager(user = currentUser) {
+  return user?.email?.toLowerCase() === AUTHORIZED_EMAIL;
 }
 
 function createAdminActionToken(action, id = "") {
@@ -69,57 +206,86 @@ function consumeAdminActionToken(token, action, id = "") {
 }
 
 async function requestAdminAccess() {
-  if (isAdmin()) {
-    sessionStorage.removeItem(ADMIN_SESSION_KEY);
+  if (currentUser) {
+    if (supabaseClient) {
+      const { error } = await supabaseClient.auth.signOut();
+
+      if (error) {
+        toast(`No se pudo cerrar sesión: ${error.message}`);
+        return;
+      }
+    }
+
+    currentUser = null;
     renderAll();
     updateAdminButton();
+      updateAuthGate();
     showView("dashboard");
     toast("Sesión de administrador cerrada.");
     return;
   }
 
-  const modal = document.getElementById("adminModal");
-  const input = document.getElementById("adminPassword");
-
-  if (!modal || !input) return;
-
-  input.value = "";
-  modal.classList.remove("hidden");
-  input.focus();
+  window.location.href = "login.html";
 }
 
 async function authenticateAdmin() {
-  const input = document.getElementById("adminPassword");
+  const emailInput = document.getElementById("authEmail");
+  const passwordInput = document.getElementById("authPassword");
   const modal = document.getElementById("adminModal");
 
-  if (!input || !modal) return;
+  if (!emailInput || !passwordInput || !modal) return;
 
-  const password = input.value;
+  const email = emailInput.value.trim();
+  const password = passwordInput.value;
 
-  if (!password) {
-    toast("Escribe la contraseña.");
+  if (!email || !password || !supabaseClient) {
+    toast(!supabaseClient
+      ? "Supabase no está disponible."
+      : "Escribe tu correo y contraseña.");
     return;
   }
 
-  const passwordHash = await hashText(password);
+  const result = await supabaseClient.auth.signInWithPassword({
+    email,
+    password
+  });
 
-  if (passwordHash !== ADMIN_PASSWORD_HASH) {
-    toast("Contraseña incorrecta.");
+  if (result.error) {
+    toast(`No se pudo autenticar: ${result.error.message}`);
     return;
   }
 
-  sessionStorage.setItem(
-    ADMIN_SESSION_KEY,
-    JSON.stringify({
-      token: crypto.randomUUID(),
-      expiresAt: Date.now() + ADMIN_SESSION_MS
-    })
-  );
+  if (!isAuthorizedUser(result.data.user)) {
+    await supabaseClient.auth.signOut();
+    toast("Este correo no está autorizado para entrar.");
+    return;
+  }
+
+  currentUser = result.data.user;
 
   modal.classList.add("hidden");
   renderAll();
   updateAdminButton();
-  toast("Modo administrador activado durante 30 minutos.");
+  updateAuthGate();
+  toast("Sesión iniciada.");
+}
+
+async function authenticateWithGoogle() {
+  if (!supabaseClient) {
+    toast("Supabase no está disponible.");
+    return;
+  }
+
+  const { error } = await supabaseClient.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      redirectTo: window.location.href.split("#")[0]
+    }
+  });
+
+  if (error) {
+    toast(`No se pudo iniciar con Google: ${error.message}`);
+  }
 }
 
 function closeAdminAccess() {
@@ -130,6 +296,25 @@ function closeAdminAccess() {
   }
 }
 
+function toggleUserMenu(force) {
+  const menu = document.getElementById("userMenu");
+  const button = document.getElementById("headerAuth");
+  if (!menu || !button) return;
+
+  const shouldOpen = typeof force === "boolean"
+    ? force
+    : menu.classList.contains("hidden");
+
+  menu.classList.toggle("hidden", !shouldOpen);
+  button.setAttribute("aria-expanded", String(shouldOpen));
+}
+
+function openUserProfile() {
+  toggleUserMenu(false);
+  fillProfileForm();
+  showView("profile");
+}
+
 function updateAdminButton() {
   const button = document.getElementById("adminAccess");
 
@@ -137,8 +322,8 @@ function updateAdminButton() {
 
   button.querySelector("[data-admin-label]").textContent =
     isAdmin()
-      ? "Cerrar administración"
-      : "Acceso administrador";
+      ? "Cerrar sesión"
+      : "Iniciar sesión";
 }
 
 const demoTools = [
@@ -169,67 +354,196 @@ Get-ChildItem -Path $root -Recurse -Filter *.pdf |
 ];
 
 async function loadTools() {
+  if (!supabaseClient) return [];
+
+  const fetchTools = () =>
+    supabaseClient
+      .from("herramientas")
+      .select("*")
+      .order("creado_en", { ascending: true });
+
+  let { data, error } = await fetchTools();
+
+  if (error) {
+    console.error("No se pudo cargar la biblioteca desde Supabase.", error);
+    toast("Se usará el catálogo local mientras se revisa Supabase.");
+  }
+
+  if (data?.length) {
+    return data
+      .map(mapDatabaseTool)
+      .filter(tool => tool.id && tool.name);
+  }
+
+  ({ data, error } = await fetchTools());
+
+  if (error) {
+    console.error("No se pudo reintentar la carga de herramientas.", error);
+    data = [];
+  }
+
+  if (data?.length) {
+    return data
+      .map(mapDatabaseTool)
+      .filter(tool => tool.id && tool.name);
+  }
+
+  const legacyTools = await readLegacyTools();
+
+  if (legacyTools.length) {
+    if (currentUser) {
+      tools = legacyTools;
+      await syncToolsToSupabase();
+      toast(`Se migraron ${legacyTools.length} herramientas a Supabase.`);
+    }
+
+    return legacyTools;
+  }
+
+  return [];
+}
+
+async function readLegacyTools() {
   const saved = localStorage.getItem(STORAGE_KEY);
 
   if (saved) {
     try {
       const parsed = JSON.parse(saved);
 
-      if (Array.isArray(parsed)) {
-        return parsed;
+      if (Array.isArray(parsed) && parsed.length) {
+        return parsed
+          .filter(item => item && typeof item === "object")
+          .map(item => ({
+            ...item,
+            id: item.id || crypto.randomUUID(),
+            createdAt: item.createdAt || new Date().toISOString(),
+            categories: Array.isArray(item.categories) ? item.categories : [],
+            dependsOn: Array.isArray(item.dependsOn) ? item.dependsOn : []
+          }))
       }
-    } catch {}
+    } catch (error) {
+      console.error("No se pudo leer la biblioteca local para migrarla.", error);
+    }
   }
 
   try {
-    const response = await fetch("./tools/item/info.json", {
+    const response = await fetch("./tools/catalogo-herramientas.json", {
       cache: "no-store"
     });
 
     if (response.ok) {
-      const imported = await response.json();
-      const catalog = Array.isArray(imported)
-        ? imported
-        : [imported];
+      const item = await response.json();
+      const catalog = Array.isArray(item) ? item : [item];
 
-      const loadedTools = catalog
-        .filter(item => item && typeof item === "object")
-        .map(item => ({
-          ...item,
-          id: item.id || crypto.randomUUID(),
-          createdAt: item.createdAt || new Date().toISOString(),
-          dependsOn: Array.isArray(item.dependsOn)
-            ? item.dependsOn
-            : []
+      return catalog
+        .filter(value => value && typeof value === "object")
+        .map(value => ({
+          ...value,
+          id: value.id || crypto.randomUUID(),
+          createdAt: value.createdAt || new Date().toISOString(),
+          categories: Array.isArray(value.categories) ? value.categories : [],
+          dependsOn: Array.isArray(value.dependsOn) ? value.dependsOn : []
         }));
-
-      if (loadedTools.length) {
-        localStorage.setItem(
-          STORAGE_KEY,
-          JSON.stringify(loadedTools)
-        );
-
-        return loadedTools;
-      }
     }
-  } catch {}
+  } catch (error) {
+    console.error("No se pudo leer el catálogo inicial.", error);
+  }
 
-  localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify(demoTools)
-  );
-
-  return demoTools;
+  return [...demoTools];
 }
 
 let tools = [];
 let selectedRelation = { from: "", to: "" };
 
 function saveTools() {
-  localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify(tools)
-  );
+  if (supabaseClient && currentUser) {
+    syncToolsToSupabase();
+  }
+}
+
+function mapDatabaseTool(row) {
+  const rawDependencies = row.depende_de;
+  const dependencies = Array.isArray(rawDependencies)
+    ? rawDependencies
+    : typeof rawDependencies === "string"
+      ? (() => {
+          try {
+            const parsed = JSON.parse(rawDependencies);
+            return Array.isArray(parsed) ? parsed : [];
+          } catch {
+            return [];
+          }
+        })()
+      : [];
+
+  return {
+    id: row.id,
+    name: row.nombre,
+    language: row.lenguaje,
+    categories: Array.isArray(row.categorias) ? row.categorias : [],
+    code: row.codigo || "",
+    purpose: row.proposito || "",
+    problem: row.problema || "",
+    requirements: row.requisitos || "",
+    output: row.salida || "",
+    warnings: row.advertencias || "",
+    analysis: row.analisis && typeof row.analisis === "object"
+      ? row.analisis
+      : {},
+    dependsOn: dependencies,
+    createdAt: row.creado_en
+  };
+}
+
+function normalizeToolRelationships() {
+  const byId = new Map(tools.map(tool => [String(tool.id), tool.id]));
+  const byName = new Map(tools.map(tool => [tool.name.trim().toLowerCase(), tool.id]));
+
+  tools.forEach(tool => {
+    const dependencies = Array.isArray(tool.dependsOn) ? tool.dependsOn : [];
+    tool.dependsOn = [...new Set(
+      dependencies
+        .map(value => {
+          const reference = String(value).trim();
+          return byId.get(reference) || byName.get(reference.toLowerCase()) || null;
+        })
+        .filter(id => id && id !== tool.id)
+    )];
+  });
+}
+
+function mapToolToDatabase(tool) {
+  return {
+    id: tool.id || crypto.randomUUID(),
+    nombre: tool.name || "Herramienta sin nombre",
+    lenguaje: tool.language || "Otro",
+    categorias: Array.isArray(tool.categories) ? tool.categories : [],
+    codigo: tool.code || "",
+    proposito: tool.purpose || "",
+    problema: tool.problem || "",
+    requisitos: tool.requirements || "",
+    salida: tool.output || "",
+    advertencias: tool.warnings || "",
+    analisis: tool.analysis || {},
+    depende_de: Array.isArray(tool.dependsOn) ? tool.dependsOn : [],
+    creado_en: tool.createdAt || new Date().toISOString(),
+    creado_por: currentUser.id
+  };
+}
+
+async function syncToolsToSupabase() {
+  if (!tools.length) return;
+
+  const rows = tools.map(mapToolToDatabase);
+
+  const { error } = await supabaseClient
+    .from("herramientas")
+    .upsert(rows, { onConflict: "id" });
+
+  if (error) {
+    console.error("No se pudo guardar la biblioteca remota.", error);
+    toast("No se pudo guardar la biblioteca en Supabase.");
+  }
 }
 
 function escapeHtml(value = "") {
@@ -280,6 +594,65 @@ function languageIcon(language) {
   };
 
   return map[language] || "code-2";
+}
+
+function toolLanguageIcon(language, cls = "h-5 w-5", tool = {}) {
+  const brands = [
+    ["powershell", "ph-terminal-window", "#012456", "PowerShell"],
+    ["excel", "ph-file-xls", "#107C41", "Excel"],
+    ["word", "ph-file-doc", "#2B579A", "Word"],
+    ["powerpoint|presentaciones", "ph-file-ppt", "#B7472A", "PowerPoint"],
+    ["outlook|correo", "ph-envelope", "#0078D4", "Outlook"],
+    ["access", "ph-database", "#A4373A", "Access"],
+    ["power automate|powerautomate", "ph-arrows-clockwise", "#0066FF", "Power Automate"],
+    ["python", "ph-python-logo", "#3776AB", "Python"],
+    ["javascript|js", "ph-file-js", "#F7DF1E", "JavaScript", "dark"],
+    ["typescript|ts", "ph-file-ts", "#3178C6", "TypeScript"],
+    ["node|node.js|nodejs", "ph-nodes", "#339933", "Node.js"],
+    ["react", "ph-atom", "#61DAFB", "React", "dark"],
+    ["php", "ph-file-php", "#777BB4", "PHP"],
+    ["sql server|mssql", "ph-database", "#CC2927", "SQL Server"],
+    ["mysql", "ph-database", "#4479A1", "MySQL"],
+    ["postgres|postgresql", "ph-database", "#4169E1", "PostgreSQL"],
+    ["docker", "ph-package", "#2496ED", "Docker"],
+    ["git", "ph-git-branch", "#F05032", "Git"],
+    ["github", "ph-github-logo", "#181717", "GitHub"],
+    ["pdf", "ph-file-pdf", "#EC1C24", "PDF"],
+    ["windows|batch|cmd", "ph-windows-logo", "#0078D4", "Windows"],
+    ["linux", "ph-linux-logo", "#FCC624", "Linux", "dark"]
+  ];
+
+  const languageContext = String(language || "").toLowerCase();
+  const toolContext = [
+    languageContext,
+    tool.name,
+    ...(Array.isArray(tool.categories) ? tool.categories : [])
+  ]
+    .join(" ")
+    .toLowerCase();
+  const languageBrand = brands.find(([terms]) =>
+    terms.split("|").some(term => languageContext === term)
+  );
+  const brand = languageBrand || brands.find(([terms]) =>
+    terms.split("|").some(term => toolContext.includes(term))
+  );
+
+  if (brand) {
+    const iconColor = brand[4] === "dark" ? "#111827" : "#ffffff";
+    const brandColor = brand[3] === "Python" ? "#ffffff" : brand[2];
+    const glyph = brand[3] === "Python"
+      ? '<svg viewBox="0 0 64 64" class="h-[1.6rem] w-[1.6rem]" aria-hidden="true"><path fill="#3776AB" d="M31.8 6C19.5 6 20.2 11.3 20.2 11.3v7.1h11.8v2.1H15.5S6 19.4 6 32c0 12.7 8.3 12.4 8.3 12.4h5v-7.4s-.3-8.8 8.6-8.8h11.8s6.6.1 6.6-6.4V12.9S47.3 6 31.8 6Zm-6.5 4.2c1.2 0 2.2 1 2.2 2.2s-1 2.2-2.2 2.2-2.2-1-2.2-2.2 1-2.2 2.2-2.2Z"/><path fill="#FFD343" d="M32.2 58C44.5 58 43.8 52.7 43.8 52.7v-7.1H32v-2.1h16.5S58 44.6 58 32c0-12.7-8.3-12.4-8.3-12.4h-5v7.4s.3 8.8-8.6 8.8H24.3s-6.6-.1-6.6 6.4v8.9S16.7 58 32.2 58Zm6.5-4.2c-1.2 0-2.2-1-2.2-2.2s1-2.2 2.2-2.2 2.2 1 2.2 2.2-1 2.2-2.2 2.2Z"/></svg>'
+      : `<i class="tool-brand-glyph ph-duotone ${brand[1]} text-[1.6rem]" aria-hidden="true"></i>`;
+
+    return `
+      <span class="tool-brand-badge ${cls} inline-flex shrink-0 items-center justify-center rounded-xl border shadow-md ring-1 ring-black/5 dark:shadow-black/40 dark:ring-white/15" style="--brand-color:${brandColor}; --glyph-color:${iconColor}" title="${brand[3]}">
+        ${glyph}
+        <span class="sr-only">${brand[3]}</span>
+      </span>
+    `;
+  }
+
+  return icon(languageIcon(language), cls);
 }
 
 function riskBadge(analysis) {
@@ -445,21 +818,34 @@ function cardRelationship(t) {
 
   if (!previous.length && !next.length) return "";
 
-  const sequence = (first, second) => `
-    <div class="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
-      <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-900 font-semibold text-white dark:bg-white dark:text-slate-900">1</span>
+  const sequence = (first, second) => {
+    const firstStep = first.id === t.id;
+    const secondStep = second.id === t.id;
+    const activeStep = "bg-slate-900 text-white dark:bg-white dark:text-slate-900";
+    const inactiveStep = "border border-slate-300 dark:border-slate-600";
+
+    return `
+    <div class="relationship-flow flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
+      <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-semibold ${firstStep ? activeStep : inactiveStep}">1</span>
       <span class="max-w-[38%] truncate font-medium" title="${escapeHtml(first.name)}">${escapeHtml(first.name)}</span>
-      <i data-lucide="arrow-right" class="h-3 w-3 shrink-0 text-slate-400"></i>
-      <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-slate-300 font-semibold dark:border-slate-600">2</span>
+      <span class="relationship-energy" aria-hidden="true"></span>
+      <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-semibold ${secondStep ? activeStep : inactiveStep}">2</span>
       <span class="max-w-[38%] truncate font-medium" title="${escapeHtml(second.name)}">${escapeHtml(second.name)}</span>
     </div>
   `;
+  };
 
   return `
     <div class="mt-4 space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/70">
-      <p class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+      <p class="flex items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+        <span class="flex items-center gap-2">
         ${icon("git-branch", "h-3.5 w-3.5")}
         Flujo relacionado
+        </span>
+        <span class="relationship-status inline-flex items-center gap-1.5 normal-case tracking-normal">
+          <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-sky-400"></span>
+          Conectada
+        </span>
       </p>
       ${next.length ? next.map(item => sequence(t, item)).join("") : ""}
       ${previous.length ? previous.map(item => sequence(item, t)).join("") : ""}
@@ -483,16 +869,13 @@ function toolCard(t) {
 
   return `
 
-    <article class="group flex flex-col rounded-3xl border border-slate-200 bg-white p-5 shadow-soft transition hover:-translate-y-0.5 hover:shadow-lg dark:border-slate-800 dark:bg-slate-900">
+    <article data-tool-card="${escapeHtml(t.id)}" class="group relative z-10 flex min-w-0 flex-col rounded-3xl border border-slate-200 bg-white p-5 shadow-soft transition hover:-translate-y-0.5 hover:shadow-lg dark:border-slate-800 dark:bg-slate-900">
 
       <div class="flex items-start justify-between gap-3">
 
         <div class="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800">
 
-          ${icon(
-            languageIcon(t.language),
-            "h-5 w-5"
-          )}
+          ${toolLanguageIcon(t.language, "h-10 w-10", t)}
 
         </div>
 
@@ -530,8 +913,6 @@ function toolCard(t) {
       <div class="mt-4 flex flex-wrap gap-1.5">
         ${cats}
       </div>
-
-      ${cardRelationship(t)}
 
       <div class="mt-auto flex items-center justify-between border-t border-slate-100 pt-4 dark:border-slate-800">
 
@@ -607,10 +988,7 @@ function renderRecent() {
 
             <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800">
 
-              ${icon(
-                languageIcon(t.language),
-                "h-4 w-4"
-              )}
+              ${toolLanguageIcon(t.language, "h-8 w-8", t)}
 
             </div>
 
@@ -676,6 +1054,8 @@ function updateCategoryFilter() {
   if (categories.includes(current)) {
     select.value = current;
   }
+
+  renderLibrary();
 }
 
 function updateRelationshipManager() {
@@ -835,6 +1215,183 @@ function removeRelationship(toId, fromId) {
   toast("Relación eliminada.");
 }
 
+function renderRelationshipConnectors(filtered) {
+  const grid = document.getElementById("toolGrid");
+
+  if (!grid) return;
+
+  window.__relationshipObserver?.disconnect();
+  window.__relationshipObserver = null;
+  grid.querySelector("[data-relationship-layer]")?.remove();
+  window.__relationshipFilteredTools = filtered;
+
+  const relationships = [];
+
+  filtered.forEach(target => {
+    (target.dependsOn || []).forEach(previousId => {
+      const source = filtered.find(tool => tool.id === previousId);
+
+      if (source) {
+        relationships.push({ source, target });
+      }
+    });
+  });
+
+  if (!relationships.length) return;
+
+  const layer = document.createElement("div");
+  layer.dataset.relationshipLayer = "true";
+  layer.className = "relationship-layer";
+  layer.innerHTML = `<svg class="relationship-canvas" aria-hidden="true" preserveAspectRatio="none">
+    <defs>
+      <marker id="relationship-arrow" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+        <path class="relationship-link-arrow" d="M1,1 L5,3 L1,5"></path>
+      </marker>
+    </defs>
+    ${relationships.map(({ source, target }) => `
+      <g class="relationship-link" data-relationship-link="${escapeHtml(source.id)}|${escapeHtml(target.id)}" aria-label="Conexión de ${escapeHtml(source.name)} a ${escapeHtml(target.name)}">
+        <path class="relationship-link-path" marker-end="url(#relationship-arrow)"></path>
+        <foreignObject class="relationship-step-source" width="48" height="48">
+          <span xmlns="http://www.w3.org/1999/xhtml" class="relationship-step-badge bg-brand-softer text-fg-brand-strong text-xs font-medium px-1.5 py-0.5 rounded">1</span>
+        </foreignObject>
+        <foreignObject class="relationship-step-target" width="48" height="48">
+          <span xmlns="http://www.w3.org/1999/xhtml" class="relationship-step-badge bg-brand-softer text-fg-brand-strong text-xs font-medium px-1.5 py-0.5 rounded">2</span>
+        </foreignObject>
+      </g>
+    `).join("")}
+  </svg>`;
+
+  grid.appendChild(layer);
+  const canvas = layer.querySelector(".relationship-canvas");
+  const cards = Array.from(grid.querySelectorAll("[data-tool-card]"));
+
+  const positionLinks = () => {
+    const gridRect = grid.getBoundingClientRect();
+    const canvasWidth = grid.clientWidth;
+    const canvasHeight = grid.scrollHeight;
+
+    canvas.setAttribute(
+      "viewBox",
+      `0 0 ${canvasWidth} ${canvasHeight}`
+    );
+    canvas.setAttribute("width", canvasWidth);
+    canvas.setAttribute("height", canvasHeight);
+
+    relationships.forEach(({ source, target }) => {
+      const sourceCard = cards.find(card => card.dataset.toolCard === source.id);
+      const targetCard = cards.find(card => card.dataset.toolCard === target.id);
+      const link = layer.querySelector(`[data-relationship-link="${source.id}|${target.id}"]`);
+
+      if (!sourceCard || !targetCard || !link) return;
+
+      const sourceRect = sourceCard.getBoundingClientRect();
+      const targetRect = targetCard.getBoundingClientRect();
+      const sourceCenterY = sourceRect.top + sourceRect.height / 2;
+      const targetCenterY = targetRect.top + targetRect.height / 2;
+      const sameRow = Math.abs(sourceCenterY - targetCenterY) < 36;
+      const sourceAbove = sourceCenterY <= targetCenterY;
+      const sourceX = sourceRect.left + sourceRect.width / 2 - gridRect.left + grid.scrollLeft;
+      const targetX = targetRect.left + targetRect.width / 2 - gridRect.left + grid.scrollLeft;
+      const sourceBottom = sourceRect.bottom - gridRect.top + grid.scrollTop;
+      const targetTop = targetRect.top - gridRect.top + grid.scrollTop;
+      const sourceTop = sourceRect.top - gridRect.top + grid.scrollTop;
+      const targetBottom = targetRect.bottom - gridRect.top + grid.scrollTop;
+      let startX = sourceX;
+      let startY = sourceAbove ? sourceBottom : sourceTop;
+      let endX = targetX;
+      let endY = sourceAbove ? targetTop : targetBottom;
+      let pathData;
+      const sourceLabelX = sourceRect.left - gridRect.left + sourceRect.width / 2;
+      let sourceLabelY = sourceRect.bottom - gridRect.top + grid.scrollTop - 18;
+      const targetLabelX = targetRect.left - gridRect.left + targetRect.width / 2;
+      let targetLabelY = targetRect.bottom - gridRect.top + grid.scrollTop - 18;
+
+      if (sameRow) {
+        const sourceBottomY = sourceRect.bottom - gridRect.top + grid.scrollTop;
+        const targetBottomY = targetRect.bottom - gridRect.top + grid.scrollTop;
+        const rowBottom = Math.max(sourceRect.bottom, targetRect.bottom);
+        const nextRowTop = cards
+          .map(card => card.getBoundingClientRect())
+          .filter(rect => rect.top > rowBottom + 8)
+          .reduce((top, rect) => Math.min(top, rect.top), Infinity);
+        const spaceBelow = Number.isFinite(nextRowTop)
+          ? nextRowTop - rowBottom
+          : window.innerHeight - rowBottom;
+        const previousRowBottom = cards
+          .map(card => card.getBoundingClientRect())
+          .filter(rect => rect.bottom < Math.min(sourceRect.top, targetRect.top) - 8)
+          .reduce((bottom, rect) => Math.max(bottom, rect.bottom), -Infinity);
+        const spaceAbove = Number.isFinite(previousRowBottom)
+          ? Math.min(sourceRect.top, targetRect.top) - previousRowBottom
+          : Math.min(sourceRect.top, targetRect.top) - gridRect.top;
+        const routeBelow = Math.max(sourceBottomY, targetBottomY) + 16;
+        const routeAbove = Math.min(sourceRect.top, targetRect.top) - gridRect.top - 16;
+        const routeAboveIsAvailable = spaceAbove >= 34 && routeAbove > 8;
+        const routeBelowIsAvailable = spaceBelow >= 34;
+        const useAbove = !routeBelowIsAvailable && routeAboveIsAvailable;
+        const routeY = useAbove ? routeAbove : routeBelow;
+
+        startY = useAbove ? sourceRect.top - gridRect.top + grid.scrollTop : sourceBottomY;
+        endY = useAbove ? targetRect.top - gridRect.top + grid.scrollTop : targetBottomY;
+        sourceLabelY = useAbove
+          ? sourceRect.top - gridRect.top + grid.scrollTop + 18
+          : sourceBottomY - 18;
+        targetLabelY = useAbove
+          ? targetRect.top - gridRect.top + grid.scrollTop + 18
+          : targetBottomY - 18;
+        pathData = `M ${sourceX} ${startY} L ${sourceX} ${routeY} L ${targetX} ${routeY} L ${targetX} ${endY}`;
+      } else {
+        const midpointY = (startY + endY) / 2;
+        pathData = `M ${startX} ${startY} L ${startX} ${midpointY} L ${endX} ${midpointY} L ${endX} ${endY}`;
+      }
+
+      link.querySelector(".relationship-link-path").setAttribute("d", pathData);
+      const sourceBadge = link.querySelector(".relationship-step-source");
+      const targetBadge = link.querySelector(".relationship-step-target");
+      sourceBadge.setAttribute("x", sourceLabelX - 24);
+      sourceBadge.setAttribute("y", sourceLabelY - 24);
+      targetBadge.setAttribute("x", targetLabelX - 24);
+      targetBadge.setAttribute("y", targetLabelY - 24);
+    });
+  };
+
+  cards.forEach(card => {
+    const toolId = card.dataset.toolCard;
+
+    card.addEventListener("mouseenter", () => {
+      layer.querySelectorAll(`[data-relationship-link*="${toolId}"]`).forEach(link => {
+        link.classList.add("is-active");
+      });
+    });
+
+    card.addEventListener("mouseleave", () => {
+      layer.querySelectorAll(`[data-relationship-link*="${toolId}"]`).forEach(link => {
+        link.classList.remove("is-active");
+      });
+    });
+  });
+
+  positionLinks();
+  requestAnimationFrame(() => {
+    requestAnimationFrame(positionLinks);
+  });
+
+  if (window.ResizeObserver) {
+    window.__relationshipObserver?.disconnect();
+    const observer = new ResizeObserver(positionLinks);
+    window.__relationshipObserver = observer;
+    observer.observe(grid);
+    cards.forEach(card => observer.observe(card));
+  }
+
+  if (!window.__relationshipResizeBound) {
+    window.__relationshipResizeBound = true;
+    window.addEventListener("resize", () => {
+      renderRelationshipConnectors(window.__relationshipFilteredTools || []);
+    });
+  }
+}
+
 function renderLibrary() {
 
   const q =
@@ -897,20 +1454,11 @@ function renderLibrary() {
           .map(toolCard)
           .join("")
 
-      : `
-        <div class="md:col-span-2 xl:col-span-3 rounded-3xl border border-dashed border-slate-300 p-12 text-center dark:border-slate-700">
+      : `<div class="rounded-2xl border border-dashed border-slate-300 p-6 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400 md:col-span-2 xl:col-span-3">
+          No hay herramientas para mostrar con estos filtros.
+        </div>`;
 
-          <div class="text-sm font-medium">
-            No encontramos herramientas
-          </div>
-
-          <p class="mt-1 text-sm text-slate-500">
-            Prueba otra búsqueda o agrega una nueva.
-          </p>
-
-        </div>
-      `;
-
+  renderRelationshipConnectors(filtered);
   refreshIcons();
 }
 
@@ -942,6 +1490,19 @@ function deleteTool(id) {
     tools.filter(
       x => x.id !== id
     );
+
+  if (supabaseClient && currentUser) {
+    supabaseClient
+      .from("herramientas")
+      .delete()
+      .eq("id", id)
+      .then(({ error }) => {
+        if (error) {
+          console.error("No se pudo eliminar la herramienta remota.", error);
+          toast("No se pudo eliminar la herramienta de Supabase.");
+        }
+      });
+  }
 
   saveTools();
   renderAll();
@@ -1101,7 +1662,7 @@ function openTool(id) {
   if (modalMeta) {
 
     modalMeta.textContent =
-      `${t.language} · ${(t.categories || []).join(" · ")}`;
+        `${t.language} · ${(t.categories || []).join(" · ")}`;
   }
 
   modalBody.innerHTML = `
@@ -1781,7 +2342,7 @@ Si cambia el nombre de un archivo, muestra también la extensión: "archivo_orig
 Ejemplo de formato: "Pasó de HCCONTROLPRENATAL a _HCCONTROLPRENATAL_".
 Ese ejemplo solo explica el formato: reemplázalo por los valores reales encontrados en el código.
 No escribas "No determinado" si el código contiene el texto original, el texto nuevo, un prefijo, un sufijo o una regla clara de reemplazo.
-Usa "No determinado" únicamente cuando después de revisar todo el código no exista ninguna transformación concreta que pueda ejemplificarse.
+No uses "No determinado" en exampleResult. Si no existe un texto literal para mostrar antes y después, escribe un ejemplo operativo basado en la acción real del código y empieza con "Ejemplo:".
 
 warnings:
 Advierte sobre:
@@ -1879,11 +2440,27 @@ async function callGeminiModel(
   const endpoint =
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
-  const response =
-    await fetch(
+  const controller =
+    new AbortController();
+
+  const timeoutId =
+    setTimeout(
+      () => controller.abort(),
+      15000
+    );
+
+  let response;
+
+  try {
+
+    response =
+      await fetch(
       endpoint,
       {
         method: "POST",
+
+        signal:
+          controller.signal,
 
         headers: {
           "Content-Type":
@@ -1923,7 +2500,25 @@ async function callGeminiModel(
 
         })
       }
+      );
+
+  } catch (error) {
+
+    if (error.name === "AbortError") {
+
+      throw new Error(
+        "La solicitud tardó demasiado y fue cancelada."
+      );
+    }
+
+    throw error;
+
+  } finally {
+
+    clearTimeout(
+      timeoutId
     );
+  }
 
   const raw =
     await response.text();
@@ -2042,17 +2637,11 @@ async function analyzeWithGemini(
    * intentamos el siguiente.
    */
 
- const models = [
+  const models = [
 
     "gemini-3.7-flash",
 
-    "gemini-3.8-flash",
-
-    "gemini-3.6-flash",
-
     "gemini-3.5-flash",
-
-    "gemini-3.5-flash-lite",
 
     "gemini-3.1-flash-lite"
 
@@ -2150,8 +2739,8 @@ async function analyzeWithGemini(
 
           const wait =
             error.status === 429
-              ? 1800
-              : 1000;
+              ? 700
+              : 300;
 
           await sleep(
             wait
@@ -2171,7 +2760,7 @@ async function analyzeWithGemini(
       ) {
 
         await sleep(
-          700
+          250
         );
 
         continue;
@@ -2255,6 +2844,24 @@ function fillFormFromAI(
   );
 }
 
+function fallbackExample(code) {
+  const rules = [
+    [/Rename-Item|Move-Item/i, "Ejemplo: un archivo encontrado cambia de nombre o ubicación según la regla definida por el script."],
+    [/Copy-Item|CopyFile/i, "Ejemplo: se crea una copia del archivo seleccionado en la ubicación indicada por el script."],
+    [/Remove-Item|DeleteFile|unlink/i, "Ejemplo: se elimina el archivo que cumple las condiciones definidas por el script."],
+    [/Get-ChildItem|readdir|os\.listdir|glob\(/i, "Ejemplo: se obtiene un listado de los archivos que cumplen el filtro indicado."],
+    [/Export-Csv|ConvertTo-Csv|to_csv/i, "Ejemplo: se genera un archivo CSV con los datos encontrados y procesados."],
+    [/Set-Content|Add-Content|Out-File|writeFile/i, "Ejemplo: se escribe el resultado procesado en el archivo indicado."],
+    [/Get-Content|readFile|Import-Csv/i, "Ejemplo: se leen los datos del archivo y se procesan según las reglas del script."],
+    [/Invoke-WebRequest|fetch\(|requests\.|WebClient/i, "Ejemplo: se obtiene información desde la fuente externa configurada en el código."],
+    [/\.pdf|PDF/i, "Ejemplo: se procesan los archivos PDF que cumplen las condiciones indicadas."],
+    [/\.xlsx?|Excel|Workbook/i, "Ejemplo: se procesa la información del archivo Excel según las reglas definidas."]
+  ];
+
+  return rules.find(([pattern]) => pattern.test(code))?.[1] ||
+    "Ejemplo: la herramienta ejecuta la operación principal definida en el código y genera la salida correspondiente.";
+}
+
 function concreteExample(
   value,
   code
@@ -2285,7 +2892,7 @@ function concreteExample(
     return `Pasó de ${methodMatch[2]} a ${methodMatch[4]}.`;
   }
 
-  return text || "No determinado";
+  return fallbackExample(code);
 }
 
 
@@ -2856,121 +3463,6 @@ function saveAnalyzedToolFromForm() {
 
 
 /* =========================================================
-   EXPORTAR
-   ========================================================= */
-
-function exportLibrary() {
-
-  const blob =
-    new Blob(
-
-      [
-        JSON.stringify(
-          tools,
-          null,
-          2
-        )
-      ],
-
-      {
-        type:
-          "application/json"
-      }
-    );
-
-  const url =
-    URL.createObjectURL(
-      blob
-    );
-
-  const a =
-    document.createElement(
-      "a"
-    );
-
-  a.href =
-    url;
-
-  a.download =
-    "toolbox-ia-biblioteca.json";
-
-  a.click();
-
-  URL.revokeObjectURL(
-    url
-  );
-}
-
-
-/* =========================================================
-   IMPORTAR
-   ========================================================= */
-
-function importLibrary(
-  file
-) {
-
-  const actionToken =
-    createAdminActionToken(
-      "import",
-      "library"
-    );
-
-  if (!consumeAdminActionToken(actionToken, "import", "library")) {
-    toast("Necesitas iniciar sesión como administrador.");
-    return;
-  }
-
-  const reader =
-    new FileReader();
-
-  reader.onload =
-    () => {
-
-      try {
-
-        const imported =
-          JSON.parse(
-            reader.result
-          );
-
-        if (
-          !Array.isArray(
-            imported
-          )
-        ) {
-
-          throw new Error(
-            "Formato inválido"
-          );
-        }
-
-        tools =
-          imported;
-
-        saveTools();
-
-        renderAll();
-
-        toast(
-          `Se importaron ${tools.length} herramientas.`
-        );
-
-      } catch {
-
-        toast(
-          "El archivo JSON no tiene un formato válido."
-        );
-      }
-    };
-
-  reader.readAsText(
-    file
-  );
-}
-
-
-/* =========================================================
    CAMBIO DE VISTAS
    ========================================================= */
 
@@ -3029,6 +3521,10 @@ function showView(
     target.classList.add(
       "view-fade-in"
     );
+
+    if (view === "tools") {
+      renderLibrary();
+    }
   }
 
   document
@@ -3076,16 +3572,22 @@ function showView(
       "Consulta las herramientas disponibles"
     ],
 
+    relations: [
+      "Conexiones",
+      "Organiza el orden entre tus herramientas"
+    ],
+
     new: [
       "Agregar herramienta",
       "Pega el código y deja que la IA documente automáticamente la herramienta"
     ],
 
-    import: [
-      "Importar / exportar",
-      "Gestiona una copia de tu biblioteca"
+    profile: [
+      "Mi perfil",
+      "Administra tus datos personales y laborales"
     ]
-  };
+
+    };
 
   const title =
     document.getElementById(
@@ -3137,6 +3639,7 @@ function showView(
 function renderAll() {
 
   updateAdminControls();
+  updateUserProfile();
 
   renderStats();
 
@@ -3155,7 +3658,7 @@ function updateAdminControls() {
 
   document
     .querySelectorAll(
-      "[data-admin-only]"
+      "[data-admin-only]:not(.view)"
     )
     .forEach(
       element => {
@@ -3411,6 +3914,56 @@ if (adminForm) {
       authenticateAdmin();
     }
   );
+}
+
+const googleAuthButton = document.getElementById("googleAuth");
+
+if (googleAuthButton) {
+  googleAuthButton.addEventListener("click", authenticateWithGoogle);
+}
+
+const headerAuthButton = document.getElementById("headerAuth");
+
+if (headerAuthButton) {
+  headerAuthButton.addEventListener("click", () => {
+    if (currentUser) toggleUserMenu();
+    else requestAdminAccess();
+  });
+}
+
+const profileMenuButton = document.getElementById("profileMenuButton");
+
+if (profileMenuButton) {
+  profileMenuButton.addEventListener("click", openUserProfile);
+}
+
+const logoutMenuButton = document.getElementById("logoutMenuButton");
+
+if (logoutMenuButton) {
+  logoutMenuButton.addEventListener("click", () => {
+    toggleUserMenu(false);
+    requestAdminAccess();
+  });
+}
+
+const profileForm = document.getElementById("profileForm");
+
+if (profileForm) {
+  profileForm.addEventListener("submit", saveUserProfile);
+}
+
+document.addEventListener("click", event => {
+  const menu = document.getElementById("userMenu");
+  const button = document.getElementById("headerAuth");
+  if (menu && button && !menu.contains(event.target) && !button.contains(event.target)) {
+    toggleUserMenu(false);
+  }
+});
+
+const gateLoginButton = document.getElementById("gateLogin");
+
+if (gateLoginButton) {
+  gateLoginButton.addEventListener("click", requestAdminAccess);
 }
 
 const closeAdminModalButton =
@@ -3679,6 +4232,23 @@ if (mobileMenu) {
   );
 }
 
+const mobileSidebarClose =
+  document.getElementById(
+    "mobileSidebarClose"
+  );
+
+if (mobileSidebarClose) {
+  mobileSidebarClose.addEventListener(
+    "click",
+    () => {
+      document
+        .getElementById("sidebar")
+        ?.classList
+        .add("-translate-x-full");
+    }
+  );
+}
+
 
 /* =========================================================
    TEMA
@@ -3806,49 +4376,6 @@ if (aiModal) {
 
 
 /* =========================================================
-   IMPORTAR / EXPORTAR
-   ========================================================= */
-
-const exportBtn =
-  document.getElementById(
-    "exportBtn"
-  );
-
-if (exportBtn) {
-
-  exportBtn.addEventListener(
-    "click",
-    exportLibrary
-  );
-}
-
-
-const importInput =
-  document.getElementById(
-    "importInput"
-  );
-
-if (importInput) {
-
-  importInput.addEventListener(
-    "change",
-    e => {
-
-      if (
-        e.target.files &&
-        e.target.files[0]
-      ) {
-
-        importLibrary(
-          e.target.files[0]
-        );
-      }
-    }
-  );
-}
-
-
-/* =========================================================
    INICIALIZACIÓN
    ========================================================= */
 
@@ -3856,7 +4383,7 @@ const validViews = [
   "dashboard",
   "tools",
   "new",
-  "import"
+  "profile"
 ];
 
 const hashView =
@@ -3900,12 +4427,65 @@ if (initialView !== "dashboard") {
 
 initTheme();
 
-loadTools().then(loadedTools => {
+async function initializeApplication() {
+  if (supabaseClient) {
+    const { data, error } = await supabaseClient.auth.getSession();
+
+    if (error) {
+      console.error("No se pudo recuperar la sesión de Supabase.", error);
+    }
+
+    currentUser = data?.session?.user || null;
+    if (currentUser && !isAuthorizedUser(currentUser)) {
+      await supabaseClient.auth.signOut();
+      currentUser = null;
+      toast("Este correo no está autorizado para entrar.");
+    }
+
+    if (!currentUser) {
+      window.location.replace("login.html");
+      return;
+    }
+
+    updateAuthGate();
+    supabaseClient.auth.onAuthStateChange(async (_event, session) => {
+      const nextUser = session?.user || null;
+
+      if (nextUser && !isAuthorizedUser(nextUser)) {
+        await supabaseClient.auth.signOut();
+        currentUser = null;
+        toast("Este correo no está autorizado para entrar.");
+        updateAuthGate();
+        return;
+      }
+
+      currentUser = nextUser;
+
+      if (!currentUser) {
+        window.location.replace("login.html");
+        return;
+      }
+
+      if (currentUser) {
+        tools = await loadTools();
+        normalizeToolRelationships();
+      }
+
+      updateAuthGate();
+      renderAll();
+    });
+  }
+
+  const loadedTools = await loadTools();
   tools = loadedTools;
+  normalizeToolRelationships();
   renderAll();
   refreshIcons();
+  finishInitialLoad();
 
   console.log(
     `Toolbox IA iniciado correctamente con ${tools.length} herramientas.`
   );
-});
+}
+
+initializeApplication();
