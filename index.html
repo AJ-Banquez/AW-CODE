@@ -246,7 +246,7 @@
 
               <div class="relative mt-6">
                 <i data-lucide="search" class="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400"></i>
-                <input id="globalSearch" type="search" placeholder="Ej.: buscar PDFs, validar Excel, consolidar archivos..."
+                <input id="globalSearch" name="global-search" type="search" autocomplete="off" placeholder="Ej.: buscar PDFs, validar Excel, consolidar archivos..."
                   class="w-full rounded-2xl border border-slate-200 bg-slate-50 py-4 pl-12 pr-4 outline-none ring-0 placeholder:text-slate-400 focus:border-slate-400 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:focus:border-slate-500 dark:focus:bg-slate-800">
               </div>
             </div>
@@ -296,7 +296,7 @@
             <div class="flex gap-2">
               <div class="relative">
                 <i data-lucide="search" class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"></i>
-                <input id="toolSearch" class="w-64 rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-900" placeholder="Buscar...">
+                <input id="toolSearch" name="tool-search" type="search" autocomplete="off" class="w-64 rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-900" placeholder="Buscar...">
               </div>
               <select id="categoryFilter" class="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900">
                 <option value="">Todas</option>
