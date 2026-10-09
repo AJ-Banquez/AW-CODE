@@ -53,13 +53,47 @@ const inviteUserForm = document.getElementById("inviteUserForm");
 if (inviteUserForm) {
   inviteUserForm.addEventListener("submit", async event => {
     event.preventDefault();
-    await callUserAdmin("invite", {
+    const result = await callUserAdmin("invite", {
       email: document.getElementById("inviteUserEmail")?.value,
       rol: document.getElementById("inviteUserRole")?.value,
       limiteMensual: 10
     });
+
+    if (!result) return;
+
     inviteUserForm.reset();
     await loadManagedUsers();
+
+    if (result.manualInviteUrl) {
+      const copyManualInvite = async () => {
+        try {
+          await navigator.clipboard.writeText(result.manualInviteUrl);
+          toast("Enlace de invitación copiado.");
+        } catch {
+          toast("No se pudo copiar automáticamente. Selecciona el enlace y cópialo.");
+        }
+      };
+
+      if (window.Swal) {
+        await Swal.fire({
+          icon: "warning",
+          title: "Usuario creado sin correo",
+          text: "Supabase no pudo enviar el correo. Copia este enlace y envíalo al usuario por otro medio.",
+          input: "text",
+          inputValue: result.manualInviteUrl,
+          inputAttributes: { readonly: "readonly", "aria-label": "Enlace manual de invitación" },
+          showCancelButton: true,
+          confirmButtonText: "Copiar enlace",
+          cancelButtonText: "Cerrar"
+        }).then(({ isConfirmed }) => {
+          if (isConfirmed) void copyManualInvite();
+        });
+      } else {
+        await copyManualInvite();
+      }
+    } else {
+      toast("Invitación enviada correctamente.");
+    }
   });
 }
 
