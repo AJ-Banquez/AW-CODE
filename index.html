@@ -167,8 +167,11 @@
           <button data-view="relations" data-admin-only class="nav-item hidden flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
             <i data-lucide="git-branch" class="h-4 w-4"></i> Conexiones
           </button>
-          <button data-view="new" data-admin-only class="nav-item hidden flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
+          <button data-view="new" data-tool-authorized class="nav-item hidden flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
             <i data-lucide="plus-circle" class="h-4 w-4"></i> Agregar herramienta
+          </button>
+          <button data-view="users" data-owner-only class="nav-item hidden flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
+            <i data-lucide="users" class="h-4 w-4"></i> Usuarios
           </button>
         </nav>
 
@@ -205,7 +208,7 @@
             </div>
           </div>
 
-          <button data-view="new" data-admin-only class="hidden rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200">
+          <button data-view="new" data-tool-authorized class="hidden rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200">
             <span class="inline-flex items-center gap-2"><i data-lucide="plus" class="h-4 w-4"></i> Nueva herramienta</span>
           </button>
           <div class="relative">
@@ -213,7 +216,7 @@
               <span id="headerUserAvatar" class="flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white dark:bg-white dark:text-slate-900">U</span>
               <span class="hidden sm:block">
                 <span id="headerUserName" class="block max-w-40 truncate text-xs font-semibold">Usuario</span>
-                <span id="headerUserRole" class="role-badge role-employee">Empleado</span>
+                <span id="headerUserRole" class="role-badge role-manager">Propietario</span>
               </span>
               <i data-lucide="chevron-down" class="h-4 w-4 text-slate-400"></i>
             </button>
@@ -341,6 +344,36 @@
           </div>
         </section>
 
+        <section id="view-users" data-owner-only class="view hidden space-y-6">
+          <div>
+            <h2 class="text-2xl font-semibold tracking-tight">Administrar usuarios</h2>
+            <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">Asigna roles, límites mensuales y estado de acceso.</p>
+          </div>
+          <form id="inviteUserForm" class="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft dark:border-slate-800 dark:bg-slate-900">
+            <div class="flex items-start gap-3">
+              <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-sky-50 text-sky-600 dark:bg-sky-950/50 dark:text-sky-300">
+                <i data-lucide="user-plus" class="h-5 w-5"></i>
+              </div>
+              <div>
+                <h3 class="font-semibold">Invitar usuario</h3>
+                <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">Envía un acceso a un nuevo miembro del equipo.</p>
+              </div>
+            </div>
+            <div class="mt-5 flex flex-col gap-3 sm:flex-row">
+              <input id="inviteUserEmail" type="email" required placeholder="correo@empresa.com" class="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100 dark:border-slate-700 dark:bg-slate-800 dark:focus:border-sky-500 dark:focus:ring-sky-950">
+              <select id="inviteUserRole" class="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm dark:border-slate-700 dark:bg-slate-800">
+                <option value="creador">Creador</option>
+                <option value="administrador">Administrador</option>
+              </select>
+              <button class="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-700 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200">
+                <i data-lucide="send" class="h-4 w-4"></i>
+                Enviar invitación
+              </button>
+            </div>
+          </form>
+          <div id="userAdminPanel" class="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-soft dark:border-slate-800 dark:bg-slate-900"></div>
+        </section>
+
         <!-- New -->
         <section id="view-new" class="view hidden">
           <div class="mx-auto max-w-6xl">
@@ -374,7 +407,10 @@
                   </label>
                   <label class="block md:col-span-2">
                     <span class="text-sm font-medium">Categorías</span>
-                    <input id="fCategories" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800" placeholder="PDF, Excel, Auditoría (separadas por coma)">
+                    <input id="fCategories" list="toolCategoryOptions" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800" placeholder="PDF, Excel, PowerShell (separadas por coma)">
+                    <datalist id="toolCategoryOptions">
+                      <option value="PowerShell"></option><option value="Excel"></option><option value="Word"></option><option value="PowerPoint"></option><option value="Outlook"></option><option value="Access"></option><option value="Power Automate"></option><option value="Python"></option><option value="JavaScript"></option><option value="TypeScript"></option><option value="Node.js"></option><option value="React"></option><option value="PHP"></option><option value="SQL Server"></option><option value="MySQL"></option><option value="PostgreSQL"></option><option value="Docker"></option><option value="Git"></option><option value="GitHub"></option><option value="PDF"></option><option value="Windows"></option><option value="Linux"></option>
+                    </datalist>
                   </label>
                 </div>
               </div>
@@ -428,7 +464,7 @@
           <form id="profileForm" class="max-w-3xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:p-8">
             <div class="mb-8 flex items-center gap-4 border-b border-slate-200 pb-6 dark:border-slate-700">
               <div id="profileAvatar" class="flex h-16 w-16 items-center justify-center rounded-full bg-slate-900 text-lg font-semibold text-white dark:bg-white dark:text-slate-900">U</div>
-              <div><h3 id="profileHeading" class="text-lg font-semibold">Usuario</h3><p id="profileRole" class="role-badge role-employee">Empleado</p></div>
+              <div><h3 id="profileHeading" class="text-lg font-semibold">Usuario</h3><p id="profileRole" class="role-badge role-manager">Propietario</p></div>
             </div>
             <div class="grid gap-5 sm:grid-cols-2">
               <label for="profileFullName" class="block"><span class="mb-2.5 block text-sm font-medium text-slate-900 dark:text-white">Nombre completo</span><input id="profileFullName" class="block w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100 dark:border-slate-600 dark:bg-slate-800 dark:text-white dark:placeholder:text-slate-400 dark:focus:border-emerald-500 dark:focus:ring-emerald-900/40" placeholder="Nombre y apellido"></label>

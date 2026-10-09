@@ -110,6 +110,7 @@
     const AUTHORIZED_EMAIL = "banquezbetancourt15@gmail.com";
     const SUPABASE_URL = "https://wzrvcioskqwixclbalzd.supabase.co";
     const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_i4YoocPM-VP4VodsO_lzBQ__Mxq77po";
+    const PUBLIC_APP_URL = "https://aj-banquez.github.io/AW-CODE/";
     const client = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
     const form = document.getElementById("loginForm");
     const email = document.getElementById("email");
@@ -174,7 +175,7 @@
       showStatus("Conectando con Google...", true);
       const { error } = await client.auth.signInWithOAuth({
         provider: "google",
-        options: { redirectTo: window.location.href.split("#")[0] }
+        options: { redirectTo: PUBLIC_APP_URL }
       });
       if (error) {
         const providerDisabled = error.message.toLowerCase().includes("provider is not enabled");

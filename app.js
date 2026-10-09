@@ -6,11 +6,95 @@ const ADMIN_SESSION_MS = 30 * 60 * 1000;
 const AUTHORIZED_EMAIL = "banquezbetancourt15@gmail.com";
 const SUPABASE_URL = "https://wzrvcioskqwixclbalzd.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_i4YoocPM-VP4VodsO_lzBQ__Mxq77po";
+const PUBLIC_APP_URL = "https://aj-banquez.github.io/AW-CODE/";
 const supabaseClient = window.supabase?.createClient(
   SUPABASE_URL,
   SUPABASE_PUBLISHABLE_KEY
 );
 let currentUser = null;
+let currentProfile = null;
+let managedUsers = [];
+
+const TOOL_CATEGORIES = [
+  ["PowerShell", ["powershell"]],
+  ["Excel", ["excel"]],
+  ["Word", ["word"]],
+  ["PowerPoint", ["powerpoint", "presentaciones"]],
+  ["Outlook", ["outlook", "correo"]],
+  ["Access", ["access"]],
+  ["Power Automate", ["power automate", "powerautomate"]],
+  ["Python", ["python"]],
+  ["JavaScript", ["javascript", "js"]],
+  ["TypeScript", ["typescript", "ts"]],
+  ["Node.js", ["node", "node.js", "nodejs"]],
+  ["React", ["react"]],
+  ["PHP", ["php"]],
+  ["SQL Server", ["sql server", "mssql", "sql"]],
+  ["MySQL", ["mysql"]],
+  ["PostgreSQL", ["postgres", "postgresql"]],
+  ["Docker", ["docker"]],
+  ["Git", ["git"]],
+  ["GitHub", ["github"]],
+  ["PDF", ["pdf"]],
+  ["Windows", ["windows", "batch", "cmd"]],
+  ["Linux", ["linux"]]
+];
+
+function normalizeCategory(value) {
+  const text = String(value || "").trim().toLowerCase();
+  const match = TOOL_CATEGORIES.find(([, aliases]) =>
+    aliases.includes(text)
+  );
+
+  return match ? match[0] : "";
+}
+
+const inviteUserForm = document.getElementById("inviteUserForm");
+if (inviteUserForm) {
+  inviteUserForm.addEventListener("submit", async event => {
+    event.preventDefault();
+    await callUserAdmin("invite", {
+      email: document.getElementById("inviteUserEmail")?.value,
+      rol: document.getElementById("inviteUserRole")?.value,
+      limiteMensual: 10
+    });
+    inviteUserForm.reset();
+    await loadManagedUsers();
+  });
+}
+
+function normalizeTechnology(value) {
+  const text = String(value || "").trim().toLowerCase();
+  const exactMatch = normalizeCategory(value);
+
+  if (exactMatch) return exactMatch;
+
+  const match = TOOL_CATEGORIES.find(([, aliases]) =>
+    aliases.some(alias => text.includes(alias))
+  );
+
+  return match ? match[0] : String(value || "").trim();
+}
+
+function normalizeCategories(categories, language = "", context = "") {
+  const values = Array.isArray(categories) ? categories : [];
+  const normalized = values
+    .map(normalizeCategory)
+    .filter(Boolean);
+  const searchableContext = [
+    language,
+    context,
+    ...values
+  ].join(" ").toLowerCase();
+
+  TOOL_CATEGORIES.forEach(([category, aliases]) => {
+    if (aliases.some(alias => searchableContext.includes(alias))) {
+      normalized.push(category);
+    }
+  });
+
+  return [...new Set(normalized)];
+}
 
 function finishInitialLoad() {
   document.getElementById("app")?.classList.add("is-ready");
@@ -24,14 +108,19 @@ function isAuthorizedUser(user) {
 function getUserProfile(user = currentUser) {
   const email = user?.email?.toLowerCase() || "";
   const metadata = user?.user_metadata || {};
-  const isManager = email === AUTHORIZED_EMAIL;
-  const name = isManager
+  const isOwner = email === AUTHORIZED_EMAIL;
+  const name = isOwner
     ? "Armando Banquez"
     : metadata.full_name || metadata.name || email.split("@")[0] || "Usuario";
+  const role = isOwner
+    ? "Propietario"
+    : currentProfile?.rol === "administrador"
+      ? "Administrador"
+      : "Creador";
 
   return {
     name,
-    role: isManager ? "Manager" : "Empleado",
+    role,
     email,
     initials: name
       .split(/\s+/)
@@ -56,7 +145,9 @@ function updateUserProfile() {
   email.textContent = profile.email;
   avatar.textContent = profile.initials;
   role.className = `role-badge ${
-    profile.role === "Manager" ? "role-manager" : "role-employee"
+    profile.role === "Propietario" || profile.role === "Administrador"
+      ? "role-manager"
+      : "role-employee"
   }`;
 
   const menuName = document.getElementById("menuUserName");
@@ -73,7 +164,7 @@ function fillProfileForm(profile = getUserProfile()) {
     profileFullName: metadata.full_name || metadata.name || profile.name,
     profilePhone: metadata.phone || "",
     profileAge: metadata.age || "",
-    profilePosition: metadata.position || (profile.role === "Manager" ? "Manager" : ""),
+    profilePosition: metadata.position || profile.role,
     profileEmail: profile.email
   };
 
@@ -88,7 +179,9 @@ function fillProfileForm(profile = getUserProfile()) {
   const profileRole = document.getElementById("profileRole");
   if (profileRole) {
     profileRole.className = `role-badge ${
-      profile.role === "Manager" ? "role-manager" : "role-employee"
+      profile.role === "Propietario" || profile.role === "Administrador"
+        ? "role-manager"
+        : "role-employee"
     }`;
   }
 }
@@ -157,7 +250,7 @@ async function hashText(value) {
 }
 
 function getAdminSession() {
-  return isManager()
+  return isOwner() || currentProfile?.rol === "administrador"
     ? { token: currentUser.id, expiresAt: Date.now() + ADMIN_SESSION_MS }
     : null;
 }
@@ -168,6 +261,39 @@ function isAdmin() {
 
 function isManager(user = currentUser) {
   return user?.email?.toLowerCase() === AUTHORIZED_EMAIL;
+}
+
+function isOwner(user = currentUser) {
+  return user?.email?.toLowerCase() === AUTHORIZED_EMAIL;
+}
+
+async function loadCurrentProfile() {
+  currentProfile = null;
+
+  if (!supabaseClient || !currentUser) return;
+
+  const { data, error } = await supabaseClient
+    .from("perfiles")
+    .select("id, rol, activo, limite_mensual")
+    .eq("id", currentUser.id)
+    .maybeSingle();
+
+  if (error) {
+    console.error("No se pudo cargar el perfil de permisos.", error);
+    return;
+  }
+
+  currentProfile = data;
+}
+
+function canCreateTools() {
+  return Boolean(
+    currentUser &&
+    currentProfile?.activo !== false &&
+    ["propietario", "administrador", "creador"].includes(
+      currentProfile?.rol || (isOwner() ? "propietario" : "")
+    )
+  );
 }
 
 function createAdminActionToken(action, id = "") {
@@ -186,7 +312,7 @@ function createAdminActionToken(action, id = "") {
 }
 
 function consumeAdminActionToken(token, action, id = "") {
-  if (!token || !isAdmin()) return false;
+  if (!token || !canCreateTools()) return false;
 
   const key = `${ADMIN_ACTION_PREFIX}${token}`;
   const raw = sessionStorage.getItem(key);
@@ -279,7 +405,7 @@ async function authenticateWithGoogle() {
   const { error } = await supabaseClient.auth.signInWithOAuth({
     provider: "google",
     options: {
-      redirectTo: window.location.href.split("#")[0]
+      redirectTo: PUBLIC_APP_URL
     }
   });
 
@@ -331,7 +457,7 @@ const demoTools = [
     id: crypto.randomUUID(),
     name: "Buscar último laboratorio",
     language: "PowerShell",
-    categories: ["PDF", "Laboratorio", "Pacientes"],
+    categories: ["PDF", "PowerShell"],
     code: `# Ejemplo de demostración
 $root = "C:\\Pacientes"
 
@@ -416,8 +542,13 @@ async function readLegacyTools() {
           .map(item => ({
             ...item,
             id: item.id || crypto.randomUUID(),
+            createdBy: item.createdBy || null,
             createdAt: item.createdAt || new Date().toISOString(),
-            categories: Array.isArray(item.categories) ? item.categories : [],
+            categories: normalizeCategories(
+              item.categories,
+              item.language,
+              item.name
+            ),
             dependsOn: Array.isArray(item.dependsOn) ? item.dependsOn : []
           }))
       }
@@ -440,8 +571,13 @@ async function readLegacyTools() {
         .map(value => ({
           ...value,
           id: value.id || crypto.randomUUID(),
+          createdBy: value.createdBy || null,
           createdAt: value.createdAt || new Date().toISOString(),
-          categories: Array.isArray(value.categories) ? value.categories : [],
+          categories: normalizeCategories(
+            value.categories,
+            value.language,
+            value.name
+          ),
           dependsOn: Array.isArray(value.dependsOn) ? value.dependsOn : []
         }));
     }
@@ -478,9 +614,14 @@ function mapDatabaseTool(row) {
 
   return {
     id: row.id,
+    createdBy: row.creado_por || null,
     name: row.nombre,
     language: row.lenguaje,
-    categories: Array.isArray(row.categorias) ? row.categorias : [],
+    categories: normalizeCategories(
+      row.categorias,
+      row.lenguaje,
+      row.nombre
+    ),
     code: row.codigo || "",
     purpose: row.proposito || "",
     problem: row.problema || "",
@@ -527,7 +668,7 @@ function mapToolToDatabase(tool) {
     analisis: tool.analysis || {},
     depende_de: Array.isArray(tool.dependsOn) ? tool.dependsOn : [],
     creado_en: tool.createdAt || new Date().toISOString(),
-    creado_por: currentUser.id
+    creado_por: tool.createdBy || currentUser.id
   };
 }
 
@@ -653,6 +794,28 @@ function toolLanguageIcon(language, cls = "h-5 w-5", tool = {}) {
   }
 
   return icon(languageIcon(language), cls);
+}
+
+function toolTechnologyFlow(tool, cls = "h-10 w-10") {
+  const technologies = [
+    tool.language,
+    ...(Array.isArray(tool.categories) ? tool.categories : [])
+  ]
+    .map(normalizeTechnology)
+    .filter(Boolean)
+    .filter((value, index, values) =>
+      values.findIndex(item => item.toLowerCase() === value.toLowerCase()) === index
+    )
+    .slice(0, 3);
+
+  return `
+    <div class="flex min-w-0 items-center gap-1.5" aria-label="${escapeHtml(technologies.join(" hacia "))}">
+      ${technologies.map((technology, index) => `
+        ${index ? icon("arrow-right", "h-4 w-4 shrink-0 text-slate-400") : ""}
+        ${toolLanguageIcon(technology, cls, { name: technology, categories: [] })}
+      `).join("")}
+    </div>
+  `;
 }
 
 function riskBadge(analysis) {
@@ -873,9 +1036,9 @@ function toolCard(t) {
 
       <div class="flex items-start justify-between gap-3">
 
-        <div class="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800">
+        <div class="flex min-h-11 min-w-11 items-center rounded-xl bg-slate-100 px-1 dark:bg-slate-800">
 
-          ${toolLanguageIcon(t.language, "h-10 w-10", t)}
+          ${toolTechnologyFlow(t)}
 
         </div>
 
@@ -988,7 +1151,7 @@ function renderRecent() {
 
             <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800">
 
-              ${toolLanguageIcon(t.language, "h-8 w-8", t)}
+              ${toolTechnologyFlow(t, "h-8 w-8")}
 
             </div>
 
@@ -3301,22 +3464,20 @@ function saveAnalyzedToolFromForm() {
     aiAnalyzedTool.language;
 
   const categories =
-    (
-      document
-        .getElementById(
-          "fCategories"
-        )
-        ?.value ||
-      ""
-    )
-      .split(",")
-      .map(
-        x =>
-          x.trim()
+    normalizeCategories(
+      (
+        document
+          .getElementById(
+            "fCategories"
+          )
+          ?.value ||
+        ""
       )
-      .filter(
-        Boolean
-      );
+        .split(",")
+        .map(x => x.trim()),
+      language,
+      name
+    );
 
   const purpose =
     document
@@ -3470,6 +3631,10 @@ function showView(
   view,
   options = {}
 ) {
+  if (view === "users" && !isOwner()) {
+    toast("Solo el Propietario puede administrar usuarios.");
+    return;
+  }
 
   const currentView =
     document.querySelector(
@@ -3524,6 +3689,10 @@ function showView(
 
     if (view === "tools") {
       renderLibrary();
+    }
+
+    if (view === "users") {
+      loadManagedUsers();
     }
   }
 
@@ -3585,6 +3754,11 @@ function showView(
     profile: [
       "Mi perfil",
       "Administra tus datos personales y laborales"
+    ],
+
+    users: [
+      "Usuarios",
+      "Administra roles, límites y acceso"
     ]
 
     };
@@ -3669,7 +3843,97 @@ function updateAdminControls() {
       }
     );
 
+  document.querySelectorAll("[data-tool-authorized]").forEach(element => {
+    element.classList.toggle("hidden", !canCreateTools());
+  });
+
+  document.querySelectorAll("[data-owner-only]").forEach(element => {
+    element.classList.toggle("hidden", !isOwner());
+  });
+
   updateAdminButton();
+}
+
+async function callUserAdmin(action, values = {}) {
+  if (!supabaseClient || !isOwner()) {
+    toast("Solo el Propietario puede administrar usuarios.");
+    return null;
+  }
+
+  const { data, error } = await supabaseClient.functions.invoke("admin-users", {
+    body: { action, ...values }
+  });
+
+  if (error || data?.error) {
+    let detail = data?.error || error?.message || "Error desconocido.";
+
+    if (error?.context instanceof Response) {
+      try {
+        const errorBody = await error.context.clone().json();
+        detail = errorBody?.error || detail;
+      } catch {
+        // Conserva el mensaje del SDK si la respuesta no es JSON.
+      }
+    }
+
+    console.error("No se pudo administrar el usuario.", { action, error, data });
+    toast(`No se pudo administrar el usuario: ${detail}`);
+    return null;
+  }
+
+  return data;
+}
+
+async function loadManagedUsers() {
+  const panel = document.getElementById("userAdminPanel");
+  if (!panel || !isOwner()) return;
+
+  panel.innerHTML = '<div class="p-5 text-sm text-slate-500">Cargando usuarios...</div>';
+  const data = await callUserAdmin("list");
+  if (!data) return;
+
+  managedUsers = data.users || [];
+  panel.innerHTML = `
+    <div class="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+      <div>
+        <h3 class="font-semibold">Usuarios del equipo</h3>
+        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">${managedUsers.length} ${managedUsers.length === 1 ? "usuario registrado" : "usuarios registrados"}</p>
+      </div>
+      <i data-lucide="users-round" class="h-5 w-5 text-slate-400"></i>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-[760px] w-full text-left text-sm">
+      <thead class="bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:bg-slate-950/40 dark:text-slate-400">
+        <tr><th class="px-5 py-3">Usuario</th><th class="px-5 py-3">Rol</th><th class="px-5 py-3">Límite mensual</th><th class="px-5 py-3">Estado</th><th class="px-5 py-3 text-right">Acciones</th></tr>
+      </thead>
+      <tbody>
+        ${managedUsers.map(user => `
+          <tr class="border-b border-slate-100 transition hover:bg-slate-50/70 dark:border-slate-800 dark:hover:bg-slate-800/40">
+            <td class="px-5 py-4">
+              <div class="flex items-center gap-3">
+                <div class="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">${escapeHtml((user.email || "U").charAt(0).toUpperCase())}</div>
+                <div>
+                  <p class="font-medium text-slate-800 dark:text-slate-100">${escapeHtml(user.email || "")}</p>
+                  <p class="mt-0.5 text-xs text-slate-400">Cuenta de acceso</p>
+                </div>
+              </div>
+            </td>
+            <td class="px-5 py-4"><select aria-label="Rol de ${escapeHtml(user.email || "usuario")}" data-user-role="${user.id}" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100 dark:border-slate-700 dark:bg-slate-900 dark:focus:border-sky-500 dark:focus:ring-sky-950">
+              <option value="creador" ${user.profile.rol === "creador" ? "selected" : ""}>Creador</option>
+              <option value="administrador" ${user.profile.rol === "administrador" ? "selected" : ""}>Administrador</option>
+            </select></td>
+            <td class="px-5 py-4"><div class="relative w-28"><input aria-label="Límite mensual de ${escapeHtml(user.email || "usuario")}" data-user-limit="${user.id}" type="number" min="0" value="${user.profile.limite_mensual ?? 10}" class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100 dark:border-slate-700 dark:bg-slate-900 dark:focus:border-sky-500 dark:focus:ring-sky-950"></div></td>
+            <td class="px-5 py-4"><label class="inline-flex cursor-pointer items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"><input aria-label="Usuario activo" data-user-active="${user.id}" type="checkbox" class="h-4 w-4 accent-emerald-600" ${user.profile.activo !== false ? "checked" : ""}> Activo</label></td>
+            <td class="px-5 py-4"><div class="flex justify-end gap-2">
+              <button type="button" data-save-user="${user.id}" title="Guardar cambios" aria-label="Guardar cambios de ${escapeHtml(user.email || "usuario")}" class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition hover:border-sky-300 hover:bg-sky-50 hover:text-sky-600 dark:border-slate-700 dark:text-slate-300 dark:hover:border-sky-700 dark:hover:bg-sky-950/40 dark:hover:text-sky-300"><i data-lucide="save" class="h-4 w-4"></i></button>
+              <button type="button" data-delete-user="${user.id}" title="Eliminar usuario" aria-label="Eliminar usuario ${escapeHtml(user.email || "usuario")}" class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-red-100 text-red-500 transition hover:bg-red-50 dark:border-red-900/50 dark:hover:bg-red-950/30"><i data-lucide="trash-2" class="h-4 w-4"></i></button>
+            </div></td>
+          </tr>
+        `).join("")}
+      </tbody>
+      </table>
+    </div>`;
+  refreshIcons();
 }
 
 
@@ -3745,7 +4009,7 @@ function updateThemeButton() {
 
 document.addEventListener(
   "click",
-  e => {
+  async e => {
 
     const relationChoice =
       e.target.closest(
@@ -3877,6 +4141,22 @@ document.addEventListener(
         return;
       }
 
+      if (
+        viewButton.hasAttribute("data-owner-only") &&
+        !isOwner()
+      ) {
+        toast("Solo el Propietario puede administrar usuarios.");
+        return;
+      }
+
+      if (
+        viewButton.hasAttribute("data-tool-authorized") &&
+        !canCreateTools()
+      ) {
+        toast("Tu usuario no tiene permiso para crear herramientas.");
+        return;
+      }
+
       if (viewButton.dataset.view === "new") {
         resetToolForm();
       }
@@ -3953,6 +4233,32 @@ if (profileForm) {
 }
 
 document.addEventListener("click", event => {
+  const target = event.target instanceof Element ? event.target : null;
+  const saveUserButton = target?.closest("[data-save-user]");
+  const deleteUserButton = target?.closest("[data-delete-user]");
+
+  if (saveUserButton || deleteUserButton) {
+    const id = (saveUserButton || deleteUserButton).dataset.saveUser ||
+      (saveUserButton || deleteUserButton).dataset.deleteUser;
+
+    if (deleteUserButton && !window.confirm("¿Eliminar este usuario de Supabase?")) {
+      return;
+    }
+
+    const action = saveUserButton ? "update" : "delete";
+    const values = action === "update"
+      ? {
+          userId: id,
+          rol: document.querySelector(`[data-user-role="${id}"]`)?.value,
+          limiteMensual: Number(document.querySelector(`[data-user-limit="${id}"]`)?.value),
+          activo: document.querySelector(`[data-user-active="${id}"]`)?.checked
+        }
+      : { userId: id };
+
+    void callUserAdmin(action, values).then(() => loadManagedUsers());
+    return;
+  }
+
   const menu = document.getElementById("userMenu");
   const button = document.getElementById("headerAuth");
   if (menu && button && !menu.contains(event.target) && !button.contains(event.target)) {
@@ -4383,7 +4689,8 @@ const validViews = [
   "dashboard",
   "tools",
   "new",
-  "profile"
+  "profile",
+  "users"
 ];
 
 const hashView =
@@ -4447,6 +4754,7 @@ async function initializeApplication() {
       return;
     }
 
+    await loadCurrentProfile();
     updateAuthGate();
     supabaseClient.auth.onAuthStateChange(async (_event, session) => {
       const nextUser = session?.user || null;
@@ -4462,11 +4770,13 @@ async function initializeApplication() {
       currentUser = nextUser;
 
       if (!currentUser) {
+        currentProfile = null;
         window.location.replace("login.html");
         return;
       }
 
       if (currentUser) {
+        await loadCurrentProfile();
         tools = await loadTools();
         normalizeToolRelationships();
       }
