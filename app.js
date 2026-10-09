@@ -101,6 +101,21 @@ function finishInitialLoad() {
   document.getElementById("appLoader")?.classList.add("is-hidden");
 }
 
+function protectSearchFields() {
+  document.querySelectorAll("[data-search-field]").forEach(input => {
+    input.value = "";
+    input.addEventListener("pointerdown", () => {
+      input.removeAttribute("readonly");
+    }, { once: true });
+    input.addEventListener("focus", () => {
+      input.removeAttribute("readonly");
+    });
+    input.addEventListener("blur", () => {
+      if (!input.value) input.setAttribute("readonly", "");
+    });
+  });
+}
+
 function isAuthorizedUser(user) {
   return Boolean(user?.email);
 }
@@ -274,7 +289,7 @@ async function loadCurrentProfile() {
 
   const { data, error } = await supabaseClient
     .from("perfiles")
-    .select("id, rol, activo, limite_mensual")
+    .select("id, rol, activo, limite_mensual, password_set, invitacion_aceptada_en")
     .eq("id", currentUser.id)
     .maybeSingle();
 
@@ -284,6 +299,86 @@ async function loadCurrentProfile() {
   }
 
   currentProfile = data;
+}
+
+function requiresPasswordSetup() {
+  return Boolean(currentUser && !isOwner() && currentProfile?.password_set === false);
+}
+
+function isAccountBlocked() {
+  return Boolean(currentUser && !isOwner() && currentProfile?.activo === false);
+}
+
+function showPasswordSetup() {
+  const modal = document.getElementById("passwordSetupModal");
+  if (modal) {
+    modal.classList.remove("hidden");
+    refreshIcons();
+  }
+}
+
+async function completePasswordSetup(event) {
+  event.preventDefault();
+  const password = document.getElementById("setupPassword")?.value || "";
+  const confirmation = document.getElementById("setupPasswordConfirm")?.value || "";
+  if (password.length < 8 || password !== confirmation) {
+    toast("Las contraseñas deben coincidir y tener al menos 8 caracteres.");
+    return;
+  }
+  const { data, error } = await supabaseClient.auth.updateUser({ password });
+  if (error) {
+    toast(`No se pudo crear la contraseña: ${error.message}`);
+    return;
+  }
+  const { error: profileError } = await supabaseClient
+    .from("perfiles")
+    .update({ password_set: true, invitacion_aceptada_en: new Date().toISOString() })
+    .eq("id", data.user.id);
+  if (profileError) {
+    toast(`No se pudo activar la cuenta: ${profileError.message}`);
+    return;
+  }
+  currentUser = data.user;
+  await loadCurrentProfile();
+  document.getElementById("passwordSetupModal")?.classList.add("hidden");
+  const toolsData = await loadTools();
+  tools = toolsData;
+  normalizeToolRelationships();
+  renderAll();
+  toast("Cuenta activada correctamente.");
+}
+
+async function sendPasswordCode() {
+  if (!currentUser?.email) return;
+  const { error } = await supabaseClient.auth.signInWithOtp({
+    email: currentUser.email,
+    options: { shouldCreateUser: false }
+  });
+  toast(error
+    ? `No se pudo enviar el código: ${error.message}`
+    : "Código enviado a tu correo.");
+}
+
+async function changePasswordWithCode(event) {
+  event.preventDefault();
+  const token = document.getElementById("passwordOtp")?.value.trim();
+  const password = document.getElementById("newPassword")?.value || "";
+  if (!token || password.length < 8) {
+    toast("Escribe el código y una contraseña de al menos 8 caracteres.");
+    return;
+  }
+  const { error: verifyError } = await supabaseClient.auth.verifyOtp({
+    email: currentUser.email,
+    token,
+    type: "email"
+  });
+  if (verifyError) {
+    toast(`Código inválido: ${verifyError.message}`);
+    return;
+  }
+  const { error } = await supabaseClient.auth.updateUser({ password });
+  toast(error ? `No se pudo cambiar la contraseña: ${error.message}` : "Contraseña actualizada.");
+  if (!error) event.target.reset();
 }
 
 function canCreateTools() {
@@ -719,6 +814,24 @@ function toast(message) {
   window.__toast = setTimeout(() => {
     el.classList.add("hidden");
   }, 3500);
+}
+
+async function confirmAction(title, text) {
+  if (!window.Swal) return false;
+  const result = await Swal.fire({
+    title,
+    text,
+    icon: "warning",
+    showCancelButton: true,
+    confirmButtonText: "Sí, continuar",
+    cancelButtonText: "Cancelar",
+    buttonsStyling: false,
+    customClass: {
+      confirmButton: "rounded-xl bg-red-600 px-4 py-2.5 text-sm font-medium text-white",
+      cancelButton: "ml-2 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700"
+    }
+  });
+  return result.isConfirmed;
 }
 
 function languageIcon(language) {
@@ -1625,7 +1738,7 @@ function renderLibrary() {
   refreshIcons();
 }
 
-function deleteTool(id) {
+async function deleteTool(id) {
 
   const actionToken =
     createAdminActionToken(
@@ -1645,7 +1758,7 @@ function deleteTool(id) {
 
   if (!tool) return;
 
-  if (!window.confirm(`¿Eliminar la herramienta "${tool.name}"?`)) {
+  if (!await confirmAction("¿Eliminar herramienta?", `Se eliminará "${tool.name}" de la biblioteca.`)) {
     return;
   }
 
@@ -2270,15 +2383,14 @@ let editingToolId =
   null;
 
 function getGeminiKey() {
-
-  return (
-    sessionStorage.getItem(
-      GEMINI_KEY_STORAGE
-    ) || ""
-  );
+  return "";
 }
 
 function openAiSettings() {
+  if (!isOwner()) {
+    toast("Solo el Propietario puede administrar las claves de IA.");
+    return;
+  }
 
   const modal =
     document.getElementById(
@@ -2292,16 +2404,13 @@ function openAiSettings() {
 
   if (!modal) return;
 
-  if (input) {
-
-    input.value =
-      getGeminiKey();
-  }
+  if (input) input.value = "";
 
   modal.classList.remove(
     "hidden"
   );
 
+  loadAiKeys();
   refreshIcons();
 }
 
@@ -2320,7 +2429,7 @@ function closeAiSettings() {
   }
 }
 
-function saveAiKey() {
+async function saveAiKey() {
 
   const input =
     document.getElementById(
@@ -2340,35 +2449,43 @@ function saveAiKey() {
     return;
   }
 
-  sessionStorage.setItem(
-    GEMINI_KEY_STORAGE,
-    key
-  );
+  const name = document.getElementById("geminiKeyName")?.value.trim() || "Clave Gemini";
+  const result = await supabaseClient.functions.invoke("ai-keys", {
+    body: { action: "save", name, key }
+  });
+  if (result.error || result.data?.error) {
+    toast(result.data?.error || result.error.message);
+    return;
+  }
 
-  closeAiSettings();
-
-  toast(
-    "API Key guardada para esta sesión."
-  );
+  if (input) input.value = "";
+  const nameInput = document.getElementById("geminiKeyName");
+  if (nameInput) nameInput.value = "";
+  await loadAiKeys();
+  toast("API Key cifrada y guardada.");
 }
 
-function clearAiKey() {
+async function loadAiKeys() {
+  const list = document.getElementById("geminiKeyList");
+  if (!list || !isOwner()) return;
+  const { data, error } = await supabaseClient.functions.invoke("ai-keys", {
+    body: { action: "list" }
+  });
+  if (error || data?.error) {
+    list.innerHTML = `<p class="text-sm text-red-600">${escapeHtml(data?.error || error.message)}</p>`;
+    return;
+  }
+  list.innerHTML = (data.keys || []).length
+    ? data.keys.map(key => `<div class="flex items-center justify-between rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+        <div><p class="text-sm font-medium">${escapeHtml(key.nombre)}</p><p class="text-xs text-slate-500">${key.activa ? "Activa" : "Inactiva"}</p></div>
+        <button type="button" data-delete-ai-key="${key.id}" class="rounded-lg p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30" aria-label="Eliminar ${escapeHtml(key.nombre)}"><i data-lucide="trash-2" class="h-4 w-4"></i></button>
+      </div>`).join("")
+    : '<p class="text-sm text-slate-500">No hay claves configuradas.</p>';
+  refreshIcons();
+}
 
-  sessionStorage.removeItem(
-    GEMINI_KEY_STORAGE
-  );
-
-  const input =
-    document.getElementById(
-      "geminiKey"
-    );
-
-  if (input)
-    input.value = "";
-
-  toast(
-    "API Key eliminada."
-  );
+async function clearAiKey() {
+  toast("Para eliminar una clave, usa el botón de papelera de la lista.");
 }
 
 
@@ -2779,165 +2896,14 @@ async function callGeminiModel(
 async function analyzeWithGemini(
   code
 ) {
-
-  const key =
-    getGeminiKey();
-
-  if (!key) {
-
-    throw new Error(
-      "No hay API Key. Abre Configurar IA en el menú lateral."
-    );
+  showAiStatus("loading", "Analizando con IA...", "Las claves permanecen en Supabase.");
+  const { data, error } = await supabaseClient.functions.invoke("ai-analyze", {
+    body: { code }
+  });
+  if (error || data?.error) {
+    throw new Error(data?.error || error?.message || "No fue posible analizar la herramienta.");
   }
-
-  /*
-   * IMPORTANTE:
-   *
-   * No todos los modelos necesariamente estarán
-   * disponibles para todos los proyectos.
-   *
-   * Si uno responde 404, 429 o 503,
-   * intentamos el siguiente.
-   */
-
-  const models = [
-
-    "gemini-3.7-flash",
-
-    "gemini-3.5-flash",
-
-    "gemini-3.1-flash-lite"
-
-];
-
-  const errors = [];
-
-  for (
-    let i = 0;
-    i < models.length;
-    i++
-  ) {
-
-    const model =
-      models[i];
-
-    showAiStatus(
-
-      "loading",
-
-      `Analizando con ${model}...`,
-
-      `Intento ${i + 1} de ${models.length}.`
-
-    );
-
-    try {
-
-      const result =
-        await callGeminiModel(
-          key,
-          model,
-          code
-        );
-
-      console.log(
-        `Gemini respondió correctamente usando ${model}.`
-      );
-
-      return result;
-
-    } catch (error) {
-
-      console.warn(
-        `Falló ${model}:`,
-        error
-      );
-
-      errors.push(
-        `${model}: ${error.message}`
-      );
-
-      /*
-       * Errores de autenticación.
-       */
-
-      if (
-        [
-          400,
-          401,
-          403
-        ].includes(
-          error.status
-        )
-      ) {
-
-        throw error;
-      }
-
-      /*
-       * 404
-       * modelo no disponible
-       *
-       * 429
-       * límite
-       *
-       * 503
-       * alta demanda
-       */
-
-      if (
-        [
-          404,
-          429,
-          503
-        ].includes(
-          error.status
-        )
-      ) {
-
-        if (
-          i <
-          models.length - 1
-        ) {
-
-          const wait =
-            error.status === 429
-              ? 700
-              : 300;
-
-          await sleep(
-            wait
-          );
-
-          continue;
-        }
-      }
-
-      /*
-       * Otros errores.
-       */
-
-      if (
-        i <
-        models.length - 1
-      ) {
-
-        await sleep(
-          250
-        );
-
-        continue;
-      }
-    }
-  }
-
-  throw new Error(
-
-    "No fue posible analizar la herramienta con los modelos disponibles.\n\n" +
-
-    errors.join("\n")
-
-  );
+  return data.result;
 }
 
 
@@ -3181,17 +3147,6 @@ async function submitTool(e) {
 
     toast(
       "Pega primero el código de la herramienta."
-    );
-
-    return;
-  }
-
-  if (!getGeminiKey()) {
-
-    openAiSettings();
-
-    toast(
-      "Configura primero la API Key de Gemini."
     );
 
     return;
@@ -4232,18 +4187,43 @@ if (profileForm) {
   profileForm.addEventListener("submit", saveUserProfile);
 }
 
-document.addEventListener("click", event => {
+const passwordSetupForm = document.getElementById("passwordSetupForm");
+if (passwordSetupForm) {
+  passwordSetupForm.addEventListener("submit", completePasswordSetup);
+}
+
+const changePasswordForm = document.getElementById("changePasswordForm");
+if (changePasswordForm) {
+  changePasswordForm.addEventListener("submit", changePasswordWithCode);
+}
+
+document.getElementById("sendPasswordCode")?.addEventListener("click", sendPasswordCode);
+
+document.addEventListener("click", async event => {
   const target = event.target instanceof Element ? event.target : null;
   const saveUserButton = target?.closest("[data-save-user]");
   const deleteUserButton = target?.closest("[data-delete-user]");
+  const deleteAiKeyButton = target?.closest("[data-delete-ai-key]");
+
+  if (deleteAiKeyButton) {
+    void supabaseClient.functions.invoke("ai-keys", {
+      body: { action: "delete", id: deleteAiKeyButton.dataset.deleteAiKey }
+    }).then(result => {
+      if (result.error || result.data?.error) {
+        toast(result.data?.error || result.error.message);
+        return;
+      }
+      void loadAiKeys();
+      toast("Clave de IA eliminada.");
+    });
+    return;
+  }
 
   if (saveUserButton || deleteUserButton) {
     const id = (saveUserButton || deleteUserButton).dataset.saveUser ||
       (saveUserButton || deleteUserButton).dataset.deleteUser;
 
-    if (deleteUserButton && !window.confirm("¿Eliminar este usuario de Supabase?")) {
-      return;
-    }
+    if (deleteUserButton && !await confirmAction("¿Eliminar usuario?", "Esta acción no se puede deshacer.")) return;
 
     const action = saveUserButton ? "update" : "delete";
     const values = action === "update"
@@ -4735,6 +4715,12 @@ if (initialView !== "dashboard") {
 initTheme();
 
 async function initializeApplication() {
+  protectSearchFields();
+  const globalSearchInput = document.getElementById("globalSearch");
+  const toolSearchInput = document.getElementById("toolSearch");
+  if (globalSearchInput) globalSearchInput.value = "";
+  if (toolSearchInput) toolSearchInput.value = "";
+
   if (supabaseClient) {
     const { data, error } = await supabaseClient.auth.getSession();
 
@@ -4755,6 +4741,19 @@ async function initializeApplication() {
     }
 
     await loadCurrentProfile();
+    if (isAccountBlocked()) {
+      await supabaseClient.auth.signOut();
+      currentUser = null;
+      toast("Tu cuenta está desactivada. Contacta al Propietario.");
+      window.location.replace("login.html");
+      return;
+    }
+    if (requiresPasswordSetup()) {
+      updateAuthGate();
+      showPasswordSetup();
+      finishInitialLoad();
+      return;
+    }
     updateAuthGate();
     supabaseClient.auth.onAuthStateChange(async (_event, session) => {
       const nextUser = session?.user || null;
@@ -4777,6 +4776,18 @@ async function initializeApplication() {
 
       if (currentUser) {
         await loadCurrentProfile();
+        if (isAccountBlocked()) {
+          await supabaseClient.auth.signOut();
+          currentUser = null;
+          toast("Tu cuenta está desactivada. Contacta al Propietario.");
+          window.location.replace("login.html");
+          return;
+        }
+        if (requiresPasswordSetup()) {
+          updateAuthGate();
+          showPasswordSetup();
+          return;
+        }
         tools = await loadTools();
         normalizeToolRelationships();
       }

@@ -30,6 +30,7 @@
   <script src="https://unpkg.com/lucide@latest"></script>
   <!-- Supabase Auth and database client -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="https://cdn.jsdelivr.net/npm/flowbite@2.5.2/dist/flowbite.min.js"></script>
 
   <style>
@@ -176,7 +177,7 @@
         </nav>
 
         <div class="border-t border-slate-200 p-4 dark:border-slate-800 space-y-2">
-          <button id="aiSettings" class="hidden flex w-full items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-sm hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800" data-admin-only>
+          <button id="aiSettings" class="hidden flex w-full items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-sm hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800" data-owner-only>
             <span class="flex items-center gap-3">
               <i data-lucide="bot" class="h-4 w-4"></i>
               <span>Configurar IA</span>
@@ -249,7 +250,7 @@
 
               <div class="relative mt-6">
                 <i data-lucide="search" class="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400"></i>
-                <input id="globalSearch" name="global-search" type="search" autocomplete="off" placeholder="Ej.: buscar PDFs, validar Excel, consolidar archivos..."
+                <input id="globalSearch" name="library-query" type="text" role="searchbox" data-search-field readonly autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="search" placeholder="Ej.: buscar PDFs, validar Excel, consolidar archivos..."
                   class="w-full rounded-2xl border border-slate-200 bg-slate-50 py-4 pl-12 pr-4 outline-none ring-0 placeholder:text-slate-400 focus:border-slate-400 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:focus:border-slate-500 dark:focus:bg-slate-800">
               </div>
             </div>
@@ -299,7 +300,7 @@
             <div class="flex gap-2">
               <div class="relative">
                 <i data-lucide="search" class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"></i>
-                <input id="toolSearch" name="tool-search" type="search" autocomplete="off" class="w-64 rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-900" placeholder="Buscar...">
+                <input id="toolSearch" name="catalog-query" type="text" role="searchbox" data-search-field readonly autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="search" class="w-64 rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-900" placeholder="Buscar...">
               </div>
               <select id="categoryFilter" class="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900">
                 <option value="">Todas</option>
@@ -475,6 +476,18 @@
             </div>
             <div class="mt-8 flex justify-end"><button type="submit" class="rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-emerald-800 focus:outline-none focus:ring-4 focus:ring-emerald-200 dark:bg-emerald-600 dark:hover:bg-emerald-700 dark:focus:ring-emerald-900">Guardar cambios</button></div>
           </form>
+          <form id="changePasswordForm" class="max-w-3xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:p-8">
+            <h3 class="text-lg font-semibold">Cambiar contraseña</h3>
+            <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">Te enviaremos un código de verificación a tu correo registrado.</p>
+            <div class="mt-5 grid gap-4 sm:grid-cols-2">
+              <label class="block"><span class="mb-2 block text-sm font-medium">Código de verificación</span><input id="passwordOtp" inputmode="numeric" autocomplete="one-time-code" maxlength="8" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none dark:border-slate-700 dark:bg-slate-800" placeholder="Código del correo"></label>
+              <label class="block"><span class="mb-2 block text-sm font-medium">Nueva contraseña</span><input id="newPassword" type="password" minlength="8" autocomplete="new-password" required class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none dark:border-slate-700 dark:bg-slate-800" placeholder="Mínimo 8 caracteres"></label>
+            </div>
+            <div class="mt-5 flex flex-wrap justify-end gap-3">
+              <button id="sendPasswordCode" type="button" class="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium dark:border-slate-700">Enviar código</button>
+              <button type="submit" class="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white">Actualizar contraseña</button>
+            </div>
+          </form>
         </section>
       </main>
     </div>
@@ -525,17 +538,14 @@
             <button id="closeAiModal" class="rounded-lg p-2 hover:bg-slate-100 dark:hover:bg-slate-800"><i data-lucide="x" class="h-5 w-5"></i></button>
           </div>
           <div class="space-y-5 p-5">
-            <div class="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
-              Para esta versión de prueba la clave se guarda solo en la sesión del navegador. No publiques esta versión con una API key compartida.
+            <div class="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-xs leading-5 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-200">
+              Las claves se cifran en Supabase y nunca se envían al navegador. Puedes registrar varias para tolerar límites o fallos.
             </div>
-            <label class="block">
-              <span class="text-sm font-medium">Gemini API Key</span>
-              <input id="geminiKey" type="password" autocomplete="off" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800" placeholder="Pega aquí tu API Key">
-            </label>
-            <div class="rounded-xl bg-slate-50 p-3 text-xs text-slate-500 dark:bg-slate-800 dark:text-slate-400">Modelo configurado: <strong>gemini-3.8-flash</strong></div>
+            <label class="block"><span class="text-sm font-medium">Nombre de la clave</span><input id="geminiKeyName" autocomplete="off" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none dark:border-slate-700 dark:bg-slate-800" placeholder="Gemini principal"></label>
+            <label class="block"><span class="text-sm font-medium">Gemini API Key</span><input id="geminiKey" type="password" autocomplete="new-password" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none dark:border-slate-700 dark:bg-slate-800" placeholder="AIza..."></label>
+            <div id="geminiKeyList" class="space-y-2"></div>
             <div class="flex justify-end gap-2">
-              <button id="clearAiKey" type="button" class="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium dark:border-slate-700">Eliminar clave</button>
-              <button id="saveAiKey" type="button" class="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white dark:bg-white dark:text-slate-900">Guardar</button>
+              <button id="saveAiKey" type="button" class="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white dark:bg-white dark:text-slate-900">Cifrar y guardar</button>
             </div>
           </div>
         </div>
@@ -559,6 +569,18 @@
     </div>
 
     <div id="toast" class="fixed bottom-5 right-5 z-[60] hidden rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-xl dark:border-slate-700 dark:bg-slate-900"></div>
+    <div id="passwordSetupModal" class="modal-backdrop fixed inset-0 z-[75] hidden bg-slate-950/60 p-4">
+      <div class="mx-auto flex h-full max-w-md items-center justify-center">
+        <form id="passwordSetupForm" class="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+          <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"><i data-lucide="shield-check" class="h-6 w-6"></i></div>
+          <h2 class="mt-4 text-xl font-semibold">Activa tu cuenta</h2>
+          <p class="mt-2 text-sm text-slate-500 dark:text-slate-400">Define una contraseña para completar la invitación. Hasta hacerlo no podrás entrar a la plataforma.</p>
+          <label class="mt-5 block"><span class="mb-2 block text-sm font-medium">Contraseña</span><input id="setupPassword" type="password" minlength="8" required autocomplete="new-password" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none dark:border-slate-700 dark:bg-slate-800" placeholder="Mínimo 8 caracteres"></label>
+          <label class="mt-4 block"><span class="mb-2 block text-sm font-medium">Repite la contraseña</span><input id="setupPasswordConfirm" type="password" minlength="8" required autocomplete="new-password" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none dark:border-slate-700 dark:bg-slate-800"></label>
+          <button class="mt-6 w-full rounded-xl bg-emerald-700 px-4 py-3 text-sm font-medium text-white">Guardar contraseña y entrar</button>
+        </form>
+      </div>
+    </div>
     <div id="authGate" class="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-4">
       <div class="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
         <div class="text-center">
